@@ -1,31 +1,81 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Driver App</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Bus - Driver</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        body { background: #333; color: white; text-align: center; font-family: sans-serif; transition: 0.5s; }
-        #status { font-size: 2.5rem; margin-top: 100px; }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; margin: 0; transition: background 0.5s; }
+        #status { margin-top: 40vh; font-size: 2.5rem; font-weight: bold; padding: 20px; }
+        #gps-indicator { position: absolute; bottom: 20px; width: 100%; color: #888; }
     </style>
 </head>
 <body>
-    <div id="status">DRIVER SYSTEM ACTIVE</div>
+    <div id="status">DRIVER ACTIVE<br><span style="font-size: 1.2rem;">Waiting for Passengers...</span></div>
+    <div id="gps-indicator">Initializing GPS...</div>
+
     <script>
-        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "driver_" + Math.random());
+        const statusDiv = document.getElementById('status');
+        const gpsDiv = document.getElementById('gps-indicator');
         
+        // 1. MQTT SETUP (SSL Port 8000)
+        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "driver_" + Math.random());
+
         client.connect({
             useSSL: true,
-            onSuccess: () => { 
+            onSuccess: () => {
                 console.log("Connected");
+                gpsDiv.innerText = "Network Connected | Broadcasting GPS";
+                // Subscribe to passenger alerts
                 client.subscribe("smart_bus_project/driver_alerts");
+                // Start sending GPS
+                startGpsSharing();
             }
         });
 
+        // 2. RECEIVE PASSENGER REQUESTS
         client.onMessageArrived = (message) => {
-            document.body.style.background = "red";
-            document.getElementById('status').innerText = "PASSENGER WAITING!";
-            window.speechSynthesis.speak(new SpeechSynthesisUtterance("New passenger request"));
+            if (message.destinationName === "smart_bus_project/driver_alerts") {
+                // Change UI to Alert Mode
+                document.body.style.background = "red";
+                statusDiv.innerHTML = "PASSENGER WAITING!<br><span style='font-size: 1.5rem;'>" + message.payloadString + "</span>";
+                
+                // Audio Alert
+                const alertVoice = new SpeechSynthesisUtterance("Passenger request received");
+                window.speechSynthesis.speak(alertVoice);
+
+                // Vibrate (if on mobile)
+                if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+
+                // Reset after 10 seconds
+                setTimeout(() => {
+                    document.body.style.background = "#1a1a1a";
+                    statusDiv.innerHTML = "DRIVER ACTIVE<br><span style='font-size: 1.2rem;'>Waiting for Passengers...</span>";
+                }, 10000);
+            }
         };
+
+        // 3. BROADCAST GPS LOCATION
+        function startGpsSharing() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(pos => {
+                    const coords = {
+                        lat: pos.coords.latitude,
+                        lon: pos.coords.longitude
+                    };
+                    
+                    // Send coordinates to the User app topic
+                    const msg = new Paho.MQTT.Message(JSON.stringify(coords));
+                    msg.destinationName = "smart_bus_project/bus_location";
+                    client.send(msg);
+                    
+                    gpsDiv.innerText = "GPS Lat: " + coords.lat.toFixed(4) + " | Lon: " + coords.lon.toFixed(4);
+                }, (err) => {
+                    gpsDiv.innerText = "GPS Error: Please enable location";
+                }, { enableHighAccuracy: true });
+            }
+        }
     </script>
 </body>
 </html>
