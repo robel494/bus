@@ -91,6 +91,7 @@ function startGPS() {
         return;
     }
 
+    // Android WebView will trigger permission prompt automatically
     navigator.geolocation.watchPosition(
         pos => {
             const coords = {
@@ -108,8 +109,20 @@ function startGPS() {
                 ", " +
                 coords.lon.toFixed(4);
         },
-        () => {
-            gpsDiv.innerText = "Please allow GPS";
+        err => {
+            switch(err.code) {
+                case err.PERMISSION_DENIED:
+                    gpsDiv.innerText = "GPS permission denied";
+                    break;
+                case err.POSITION_UNAVAILABLE:
+                    gpsDiv.innerText = "GPS position unavailable";
+                    break;
+                case err.TIMEOUT:
+                    gpsDiv.innerText = "GPS timeout";
+                    break;
+                default:
+                    gpsDiv.innerText = "GPS error";
+            }
         },
         { enableHighAccuracy: true }
     );
