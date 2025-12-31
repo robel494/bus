@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="am">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,7 +18,7 @@ body {
 }
 #status {
     margin-top: 35vh;
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     font-weight: bold;
 }
 #gps {
@@ -44,7 +44,7 @@ body {
 const statusDiv = document.getElementById("status");
 const gpsDiv = document.getElementById("gps");
 
-/* MQTT CONNECTION (SSL) */
+/* MQTT */
 const client = new Paho.MQTT.Client(
     "broker.hivemq.com",
     8884,
@@ -57,25 +57,29 @@ client.connect({
         gpsDiv.innerText = "Connected | GPS broadcasting";
         client.subscribe("smart_bus_project/driver_alerts");
         startGPS();
-    },
-    onFailure: e => {
-        gpsDiv.innerText = "Connection failed";
     }
 });
 
 /* RECEIVE PASSENGER ALERT */
 client.onMessageArrived = message => {
+    const data = JSON.parse(message.payloadString);
+
     document.body.style.background = "red";
+
     statusDiv.innerHTML =
-        "PASSENGER WAITING<br>BUS: " + message.payloadString;
+        "DISABLED PASSENGER WAITING<br>" +
+        "STATION: " + data.station + "<br>" +
+        "BUS: " + data.bus;
 
-    speechSynthesis.speak(
-        new SpeechSynthesisUtterance(
-            "Passenger waiting for bus " + message.payloadString
-        )
+    const speak = new SpeechSynthesisUtterance(
+        "በጣቢያ " + data.station +
+        " የሚጠብቅ አካል ጉዳተኛ ተሳፋሪ አለ። አውቶቡስ " +
+        data.bus
     );
+    speak.lang = "am-ET";
+    speechSynthesis.speak(speak);
 
-    navigator.vibrate?.([500, 300, 500]);
+    navigator.vibrate?.([600, 300, 600]);
 
     setTimeout(() => {
         document.body.style.background = "#1a1a1a";
@@ -84,14 +88,8 @@ client.onMessageArrived = message => {
     }, 15000);
 };
 
-/* GPS SHARING */
+/* GPS */
 function startGPS() {
-    if (!navigator.geolocation) {
-        gpsDiv.innerText = "GPS not supported";
-        return;
-    }
-
-    // Android WebView will trigger permission prompt automatically
     navigator.geolocation.watchPosition(
         pos => {
             const coords = {
@@ -109,20 +107,8 @@ function startGPS() {
                 ", " +
                 coords.lon.toFixed(4);
         },
-        err => {
-            switch(err.code) {
-                case err.PERMISSION_DENIED:
-                    gpsDiv.innerText = "GPS permission denied";
-                    break;
-                case err.POSITION_UNAVAILABLE:
-                    gpsDiv.innerText = "GPS position unavailable";
-                    break;
-                case err.TIMEOUT:
-                    gpsDiv.innerText = "GPS timeout";
-                    break;
-                default:
-                    gpsDiv.innerText = "GPS error";
-            }
+        () => {
+            gpsDiv.innerText = "GPS error";
         },
         { enableHighAccuracy: true }
     );
