@@ -41,8 +41,19 @@ body {
 <div id="gps">Connecting…</div>
 
 <script>
+/* ================= CONFIG ================= */
+const AUDIO_BASE =
+  "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO_NAME/";
+/* ========================================== */
+
 const statusDiv = document.getElementById("status");
 const gpsDiv = document.getElementById("gps");
+
+/* AUDIO */
+function playAudio(file) {
+    const audio = new Audio(AUDIO_BASE + file);
+    audio.play();
+}
 
 /* MQTT */
 const client = new Paho.MQTT.Client(
@@ -71,14 +82,7 @@ client.onMessageArrived = message => {
         "STATION: " + data.station + "<br>" +
         "BUS: " + data.bus;
 
-    const speak = new SpeechSynthesisUtterance(
-        "በጣቢያ " + data.station +
-        " የሚጠብቅ አካል ጉዳተኛ ተሳፋሪ አለ። አውቶቡስ " +
-        data.bus
-    );
-    speak.lang = "am-ET";
-    speechSynthesis.speak(speak);
-
+    playAudio("alert.wav");
     navigator.vibrate?.([600, 300, 600]);
 
     setTimeout(() => {
