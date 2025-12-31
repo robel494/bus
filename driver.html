@@ -1,46 +1,30 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Driver Dashboard</title>
+    <title>Driver App</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        body { background: #222; color: white; font-family: sans-serif; text-align: center; margin: 0; transition: 0.5s; }
-        #status { font-size: 3rem; margin-top: 20%; font-weight: bold; }
-        .alert { background: red !important; color: white; }
+        body { background: #333; color: white; text-align: center; font-family: sans-serif; transition: 0.5s; }
+        #status { font-size: 2.5rem; margin-top: 100px; }
     </style>
 </head>
 <body>
-
-    <div id="status">DRIVER SYSTEM: ACTIVE<br><br>Waiting for passengers...</div>
-
+    <div id="status">DRIVER SYSTEM ACTIVE</div>
     <script>
-        // 1. CONNECT TO THE NETWORK
         const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "driver_" + Math.random());
         
+        client.connect({
+            useSSL: true,
+            onSuccess: () => { 
+                console.log("Connected");
+                client.subscribe("smart_bus_project/driver_alerts");
+            }
+        });
+
         client.onMessageArrived = (message) => {
-            console.log("Alert received!");
-            
-            // 2. CHANGE SCREEN TO RED
-            document.body.className = "alert";
-            document.getElementById('status').innerHTML = "🚨 ALERT! 🚨<br>BLIND PASSENGER WAITING";
-
-            // 3. PLAY VOICE ALERT
-            const synth = window.speechSynthesis;
-            const alertMsg = new SpeechSynthesisUtterance("Attention driver, a passenger is waiting at the next stop.");
-            synth.speak(alertMsg);
-        };
-
-        client.connect({onSuccess: () => {
-            client.subscribe("smart_bus_project/driver_alerts");
-            console.log("Driver is online and listening...");
-        }});
-
-        // UNLOCK AUDIO: Browser needs one click to allow sound
-        document.body.onclick = () => {
-            const startMsg = new SpeechSynthesisUtterance("Driver system ready.");
-            window.speechSynthesis.speak(startMsg);
+            document.body.style.background = "red";
+            document.getElementById('status').innerText = "PASSENGER WAITING!";
+            window.speechSynthesis.speak(new SpeechSynthesisUtterance("New passenger request"));
         };
     </script>
 </body>
