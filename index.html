@@ -3,119 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>User Bus App</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <title>Smart Bus - User</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/paho-mqtt.min.js"></script>
     <style>
         body { background: black; color: yellow; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
-        #main-btn { 
-            width: 100vw; height: 100vh; background: yellow; color: black; 
-            font-size: 3rem; font-weight: bold; border: none; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; padding: 20px;
-        }
+        #main-btn { width: 100vw; height: 100vh; background: yellow; color: black; font-size: 3rem; font-weight: bold; border: none; cursor: pointer; transition: 0.3s; }
+        #info-overlay { position: absolute; bottom: 20px; width: 100%; font-size: 1.2rem; pointer-events: none; }
     </style>
 </head>
 <body>
-
     <button id="main-btn">TAP TO START</button>
+    <div id="info-overlay">Searching for GPS...</div>
 
     <script>
-        // --- 1. SETTINGS & BRAIN SETUP ---
-        const synth = window.speechSynthesis;
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        
-        let busDistance = 5.0; 
-        const BUS_SPEED = 40; 
         const mainBtn = document.getElementById('main-btn');
+        const info = document.getElementById('info-overlay');
+        const synth = window.speechSynthesis;
+        const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+        const recognition = new SpeechRecognition();
 
-        // Connect to the Driver Network
+        let userCoords = null;
+
+        // 1. MQTT SETUP (SSL Port 8000 for GitHub)
         const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "user_" + Math.random());
-        client.connect({onSuccess: () => { console.log('Network Ready'); 
-        client.subscribe("smart_bus_project/bus_location");}useSSL: true});
+        
+        client.connect({
+            useSSL: true, 
+            onSuccess: () => { 
+                info.innerText = "Network Connected";
+                client.subscribe("smart_bus_project/bus_location"); 
+            }
+        });
 
-        // --- 2. THE START TRIGGER (WITH ECHO GUARD) ---
+        // 2. GET USER LOCATION
+        navigator.geolocation.watchPosition(pos => {
+            userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+            info.innerText = "GPS Active";
+        }, err => { info.innerText = "Please enable GPS"; });
+
+        // 3. RECEIVE BUS DATA & CALCULATE TIME
+        client.onMessageArrived = (message) => {
+            if (message.destinationName === "smart_bus_project/bus_location") {
+                const busCoords = JSON.parse(message.payloadString);
+                if (userCoords) {
+                    const dist = calculateDistance(userCoords.lat, userCoords.lon, busCoords.lat, busCoords.lon);
+                    const eta = Math.round((dist / 40) * 60); // Assuming 40km/h avg speed
+                    mainBtn.innerText = eta + " MIN AWAY";
+                    if (eta <= 1) mainBtn.style.background = "#00FF00"; // Turns green when close
+                }
+            }
+        };
+
+        // 4. VOICE INTERACTION
         mainBtn.onclick = () => {
-            const welcome = new SpeechSynthesisUtterance("I am listening. Say your town number or name.");
-            
-            // THE ECHO GUARD: This makes sure the mic only starts AFTER the voice finishes
-            welcome.onend = () => {
-                mainBtn.innerText = "LISTENING NOW...";
-                mainBtn.style.background = "#ff4444"; // Turn red when listening
-                recognition.start();
+            const welcome = new SpeechSynthesisUtterance("I am listening. Say your destination.");
+            welcome.onend = () => { 
+                mainBtn.style.background = "red";
+                mainBtn.innerText = "LISTENING...";
+                recognition.start(); 
             };
-
             synth.speak(welcome);
         };
 
-        // --- 3. HANDLING THE VOICE INPUT ---
         recognition.onresult = (event) => {
-            const voiceInput = event.results[0][0].transcript.toLowerCase().trim();
+            const voiceInput = event.results[0][0].transcript;
             mainBtn.style.background = "yellow";
-            processDestination(voiceInput);
+            mainBtn.innerText = "BUS " + voiceInput + " CALLED";
+            
+            // Send Alert to Driver
+            const msg = new Paho.MQTT.Message("WAITING_" + voiceInput);
+            msg.destinationName = "smart_bus_project/driver_alerts";
+            client.send(msg);
+            
+            synth.speak(new SpeechSynthesisUtterance("Request sent for bus " + voiceInput));
         };
 
-        function processDestination(input) {
-            // Dictionary to convert names to numbers
-            const townMap = {
-                "hospital": "101",
-                "center": "101",
-                "market": "205",
-                "greenwich": "205"
-            };
-
-            let routeNumber = townMap[input] || input;
-
-            speak("Searching for buses to " + input + ". Signaling route " + routeNumber);
-            mainBtn.innerText = "SIGNALING DRIVER...";
-
-            // Send signal to Driver Dashboard
-            const message = new Paho.MQTT.Message("PASSENGER_WAITING_FOR_" + routeNumber);
-            message.destinationName = "smart_bus_project/driver_alerts";
-            client.send(message);
-
-            // Start Countdown after 3 seconds
-            setTimeout(() => { startSimulation(); }, 3000);
+        // 5. MATH FOR DISTANCE (Haversine Formula)
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Radius of Earth in km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
-
-        // --- 4. THE COUNTDOWN SIMULATION ---
-        function startSimulation() {
-            let eta = Math.round((busDistance / BUS_SPEED) * 60);
-            speak("Bus found. It is " + eta + " minutes away.");
-            
-            const timer = setInterval(() => {
-                busDistance -= 0.1; 
-                eta = Math.round((busDistance / BUS_SPEED) * 60);
-                
-                mainBtn.innerText = eta + " MIN AWAY";
-
-                if (busDistance <= 0.2) {
-                    clearInterval(timer);
-                    arrivalAlert();
-                }
-            }, 3000); 
-        }
-
-        function arrivalAlert() {
-            mainBtn.innerText = "BUS ARRIVING!";
-            mainBtn.style.background = "#00ff00"; // Green for arrival
-            
-            if (navigator.vibrate) {
-                navigator.vibrate([500, 200, 500, 200, 500]);
-            }
-            
-            speak("The bus is arriving now. Please prepare to board.");
-        }
-        function speak(text) {
-            const utter = new SpeechSynthesisUtterance(text);
-            synth.speak(utter);
-        }
-
-        recognition.onerror = () => {
-            mainBtn.style.background = "yellow";
-            mainBtn.innerText = "TAP TO TRY AGAIN";
-            speak("Sorry, I didn't hear that.");
-        };
-
     </script>
 </body>
 </html>
