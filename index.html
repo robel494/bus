@@ -30,7 +30,8 @@
 
         // Connect to the Driver Network
         const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "user_" + Math.random());
-        client.connect({onSuccess: () => { console.log("Network Ready"); }});
+        client.connect({onSuccess: () => { console.log('Network Ready'); 
+        client.subscribe("smart_bus_project/bus_location");}useSSL: true});
 
         // --- 2. THE START TRIGGER (WITH ECHO GUARD) ---
         mainBtn.onclick = () => {
