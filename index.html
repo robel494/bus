@@ -1,56 +1,87 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>User App</title>
+    <title>Smart Bus - User</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        body { background: yellow; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        #main-btn { width: 90%; height: 80%; font-size: 3rem; font-weight: bold; background: black; color: yellow; border-radius: 20px; border: none; }
+        body { background: black; color: yellow; font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
+        #main-btn { width: 100vw; height: 100vh; background: yellow; color: black; font-size: 3rem; font-weight: bold; border: none; cursor: pointer; transition: 0.3s; }
+        #status-bar { position: absolute; bottom: 20px; width: 100%; font-size: 1rem; color: #666; pointer-events: none; }
     </style>
 </head>
 <body>
     <button id="main-btn">TAP TO START</button>
+    <div id="status-bar">Connecting to Network...</div>
 
     <script>
         const mainBtn = document.getElementById('main-btn');
+        const statusBar = document.getElementById('status-bar');
         const synth = window.speechSynthesis;
         const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
         const recognition = new SpeechRecognition();
 
-        // SSL Port 8000 for GitHub Compatibility
-        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "user_" + Math.random());
+        let userCoords = null;
 
+        // Line 30: Cloud Connection Settings (SSL Port 8000)
+        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "user_" + Math.random());
+        
         client.connect({
             useSSL: true, 
-            onSuccess: () => { console.log("Connected"); }
+            onSuccess: () => { 
+                statusBar.innerText = "Network Ready | Waiting for Bus...";
+                client.subscribe("smart_bus_project/bus_location"); 
+            },
+            onFailure: (err) => { statusBar.innerText = "Connection Failed: " + err.errorMessage; }
         });
 
-        mainBtn.onclick = () => {
-            // This 'unlocks' the speech on mobile browsers
-            const msg = new SpeechSynthesisUtterance("Listening. Say your bus number.");
-            synth.speak(msg);
+        // Line 42: Get User GPS
+        navigator.geolocation.watchPosition(pos => {
+            userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        }, err => { statusBar.innerText = "Please enable GPS/Location"; });
 
-            msg.onend = () => {
+        // Line 47: Receive Bus GPS and Update Button
+        client.onMessageArrived = (message) => {
+            if (message.destinationName === "smart_bus_project/bus_location") {
+                const busCoords = JSON.parse(message.payloadString);
+                if (userCoords) {
+                    const distance = calculateDistance(userCoords.lat, userCoords.lon, busCoords.lat, busCoords.lon);
+                    const eta = Math.round((distance / 30) * 60); // 30km/h avg speed
+
+                    if (eta <= 1) {
+                        mainBtn.innerText = "BUS ARRIVING";
+                        mainBtn.style.background = "#00FF00";
+                    } else {
+                        mainBtn.innerText = eta + " MIN AWAY";
+                        mainBtn.style.background = "yellow";
+                    }
+                    statusBar.innerText = "Bus is " + distance.toFixed(2) + " km away";
+                }
+            }
+        };
+
+        // Line 68: Voice Interaction
+        mainBtn.onclick = () => {
+            const welcome = new SpeechSynthesisUtterance("I am listening. Say your bus number.");
+            synth.speak(welcome);
+            welcome.onend = () => { 
                 mainBtn.style.background = "red";
                 mainBtn.innerText = "LISTENING...";
-                recognition.start();
+                recognition.start(); 
             };
         };
 
         recognition.onresult = (event) => {
             const voiceInput = event.results[0][0].transcript;
             mainBtn.style.background = "black";
+            mainBtn.style.color = "yellow";
             mainBtn.innerText = "BUS " + voiceInput + " CALLED";
             
-            // Send to Driver
-            const message = new Paho.MQTT.Message("WAITING_" + voiceInput);
-            message.destinationName = "smart_bus_project/driver_alerts";
-            client.send(message);
+            // Line 86: Send Alert to Driver Channel
+            const msg = new Paho.MQTT.Message(voiceInput);
+            msg.destinationName = "smart_bus_project/driver_alerts";
+            client.send(msg);
             
             synth.speak(new SpeechSynthesisUtterance("Request sent for bus " + voiceInput));
         };
-    </script>
-</body>
-</html>
