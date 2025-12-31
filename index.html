@@ -125,7 +125,7 @@ client.onMessageArrived = msg => {
 
     const eta = Math.max(1, Math.round((distance / 0.5) * 2));
 
-    if (distance <= 0.0002) {
+    if (distance <= 0.002) {
         arrived = true;
         btn.innerText = "አውቶቡስ ደርሷል";
         btn.style.background = "#00ff00";
@@ -178,4 +178,5 @@ recognition.onresult = e => {
 </script>
 </body>
 </html>
+
 
