@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="am">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -54,19 +54,10 @@
             50% { transform: scale(1.05); }
         }
 
-        .gps-info {
-            font-size: 18px;
-            color: #666;
-            margin-top: 20px;
-            padding: 15px;
-            background: #f5f5f5;
-            border-radius: 10px;
-        }
-
         .bluetooth-info {
             font-size: 18px;
             color: #666;
-            margin-top: 10px;
+            margin-top: 20px;
             padding: 15px;
             background: #f5f5f5;
             border-radius: 10px;
@@ -103,60 +94,75 @@
 </head>
 <body>
     <div class="container">
+        <!-- Status Display - Shows current state -->
         <div class="status-display" id="statusDisplay">
-            <div>ተሳፋሪ በመጠበቅ ላይ</div>
+            <div>Waiting for passengers</div>
         </div>
 
+        <!-- Bluetooth Info - Shows BLE advertising status -->
         <div class="bluetooth-info" id="bluetoothInfo">
-            Bluetooth: በመጠበቅ ላይ...
+            Bluetooth: Waiting...
         </div>
 
+        <!-- Recording Indicator - Shows when microphone is active -->
         <div class="recording-indicator" id="recordingIndicator" style="display: none;">
             <span class="status-indicator active"></span>
-            <span>በመቅረጽ ላይ...</span>
+            <span>Listening...</span>
         </div>
     </div>
 
     <script>
-        const audioBaseUrl = 'https://robel494.github.io/bus/';
-        let recognition;
-        let hasReceivedRequest = false;
-        let requestCheckInterval = null;
-        const stationNumber = 3;
+        /**
+         * DRIVER DEVICE - Bus Station App
+         * 
+         * This app allows bus drivers to:
+         * 1. Receive passenger requests
+         * 2. Start BLE advertising (via external BLE tool)
+         * 3. Listen for voice input from driver
+         * 
+         * BLE Configuration (for external BLE advertising tool):
+         * - Service UUID: 12345678-1234-1234-1234-123456789abc
+         * - Characteristic UUID: 12345678-1234-1234-1234-123456789abd
+         * - RSSI values: int8 (-100 to -30 dBm)
+         * 
+         * Note: BLE advertising must be done using an external BLE tool
+         * The tool should broadcast RSSI values that passengers can read
+         */
+
+        // ========== GLOBAL VARIABLES ==========
+        let recognition;                    // Voice recognition object
+        let hasReceivedRequest = false;    // Whether a passenger request was received
+        let requestCheckInterval = null;   // Interval for checking passenger requests
+        const stationNumber = 3;          // Station number
         
-        // Bluetooth Service UUID for bus tracking (must match BLE advertiser tool)
+        // BLE Service and Characteristic UUIDs (must match BLE advertiser tool)
         const BUS_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
         const RSSI_CHARACTERISTIC_UUID = '12345678-1234-1234-1234-123456789abd';
-        
-        // Note: Use a BLE advertising tool on the driver phone with:
-        // Service UUID: 12345678-1234-1234-1234-123456789abc
-        // Characteristic UUID: 12345678-1234-1234-1234-123456789abd
-        // The tool should broadcast RSSI values as int8 (-100 to -30)
 
-        // Initialize
+        // ========== INITIALIZATION ==========
         init();
 
+        /**
+         * Initialize the driver app
+         * Starts checking for passenger requests
+         */
         function init() {
-            // Don't start voice recognition yet - wait for request
             checkForPassengerRequest();
             // Note: BLE advertising should be done using an external BLE tool
             // Configure the tool with Service UUID: 12345678-1234-1234-1234-123456789abc
         }
 
-        function playAudio(filename) {
-            const audio = new Audio(`${audioBaseUrl}${filename}`);
-            audio.play().catch(e => console.log('Audio play error:', e));
-        }
-
+        /**
+         * Check for passenger requests via localStorage
+         * In production, this would be via WebSocket/Server push notification
+         */
         function checkForPassengerRequest() {
-            // Check for passenger request via localStorage (simulating server communication)
-            // In real app, this would be via WebSocket/Server push notification
             requestCheckInterval = setInterval(() => {
                 const requestData = localStorage.getItem('busRequest');
                 if (requestData && !hasReceivedRequest) {
                     try {
                         const request = JSON.parse(requestData);
-                        // Check if request is for this station (in real app, would check bus route)
+                        // Check if request is for this station
                         if (request.station === stationNumber) {
                             handlePassengerRequest(request);
                             // Clear the request after processing
@@ -169,6 +175,10 @@
             }, 500); // Check every 500ms
         }
 
+        /**
+         * Start voice recognition for driver input
+         * Driver can speak to acknowledge or respond
+         */
         function startVoiceRecognition() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.log('Voice recognition not supported');
@@ -177,7 +187,7 @@
 
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.lang = 'am-ET';
+            recognition.lang = 'en-US'; // English language
             recognition.continuous = true;
             recognition.interimResults = false;
 
@@ -186,13 +196,12 @@
             };
 
             recognition.onresult = (event) => {
-                // Check all results for any speech input
+                // Process all recognition results
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     console.log('Voice input received:', transcript);
                     
-                    // Any voice input (even a single word) triggers the alert
-                    // This is for driver to acknowledge or respond
+                    // Any voice input from driver
                     if (transcript.trim().length > 0) {
                         console.log('Driver voice input:', transcript);
                         // Could add driver response handling here
@@ -240,22 +249,23 @@
             }
         }
 
+        /**
+         * Start BLE advertising instructions
+         * Note: Actual BLE advertising must be done using an external BLE tool
+         */
         function startBluetoothAdvertising() {
-            // Note: BLE advertising must be done using an external BLE tool
-            // The tool should be configured with:
-            // - Service UUID: 12345678-1234-1234-1234-123456789abc
-            // - Characteristic UUID: 12345678-1234-1234-1234-123456789abd
-            // - Broadcast RSSI values as int8 (signed byte)
-            // - RSSI range: -100 (far) to -30 (close)
-            
             console.log('BLE advertising should be started using external BLE tool');
             console.log('Service UUID:', BUS_SERVICE_UUID);
             console.log('Characteristic UUID:', RSSI_CHARACTERISTIC_UUID);
             
             // Update display to show BLE is ready
-            document.getElementById('bluetoothInfo').textContent = 'Bluetooth: በማስተላለፍ ላይ (BLE Tool)';
+            document.getElementById('bluetoothInfo').textContent = 'Bluetooth: Broadcasting (BLE Tool)';
         }
 
+        /**
+         * Handle passenger request
+         * Shows alert and starts BLE advertising
+         */
         function handlePassengerRequest(request) {
             hasReceivedRequest = true;
             
@@ -264,22 +274,16 @@
                 clearInterval(requestCheckInterval);
             }
             
+            // Update status display with alert
             const statusDisplay = document.getElementById('statusDisplay');
-            statusDisplay.innerHTML = `<div class="alert-status">አካል ጉዳተኛ ተሳፋሪ station ${stationNumber} ላይ እየጠበቀ ነው</div>`;
+            statusDisplay.innerHTML = `<div class="alert-status">Disabled passenger waiting at station ${stationNumber}</div>`;
             
-            playAudio('alert.wav');
-            
-            // Start Bluetooth advertising (via external BLE tool)
+            // Start BLE advertising (via external BLE tool)
             startBluetoothAdvertising();
             
             // Start voice recognition for driver input (optional)
             startVoiceRecognition();
         }
-
-        // Note: The BLE tool on the driver phone should be broadcasting RSSI values
-        // The passenger phone will connect and read these values directly
-        // No simulation needed - real BLE connection will be used
     </script>
 </body>
 </html>
-
