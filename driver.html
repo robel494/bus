@@ -54,7 +54,7 @@
             50% { transform: scale(1.05); }
         }
 
-        .bluetooth-info {
+        .gps-info {
             font-size: 18px;
             color: #666;
             margin-top: 20px;
@@ -99,9 +99,9 @@
             <div>Waiting for passengers</div>
         </div>
 
-        <!-- Bluetooth Info - Shows BLE advertising status -->
-        <div class="bluetooth-info" id="bluetoothInfo">
-            Bluetooth: Waiting...
+        <!-- GPS Info - Shows current bus location -->
+        <div class="gps-info" id="gpsInfo">
+            GPS: Getting location...
         </div>
 
         <!-- Recording Indicator - Shows when microphone is active -->
@@ -117,39 +117,84 @@
          * 
          * This app allows bus drivers to:
          * 1. Receive passenger requests
-         * 2. Start BLE advertising (via external BLE tool)
-         * 3. Listen for voice input from driver
-         * 
-         * BLE Configuration (for external BLE advertising tool):
-         * - Service UUID: 12345678-1234-1234-1234-123456789abc
-         * - Characteristic UUID: 12345678-1234-1234-1234-123456789abd
-         * - RSSI values: int8 (-100 to -30 dBm)
-         * 
-         * Note: BLE advertising must be done using an external BLE tool
-         * The tool should broadcast RSSI values that passengers can read
+         * 2. Track bus location using GPS
+         * 3. Broadcast GPS location to passengers
+         * 4. Listen for voice input from driver
          */
 
         // ========== GLOBAL VARIABLES ==========
         let recognition;                    // Voice recognition object
         let hasReceivedRequest = false;    // Whether a passenger request was received
         let requestCheckInterval = null;   // Interval for checking passenger requests
-        const stationNumber = 3;          // Station number
-        
-        // BLE Service and Characteristic UUIDs (must match BLE advertiser tool)
-        const BUS_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
-        const RSSI_CHARACTERISTIC_UUID = '12345678-1234-1234-1234-123456789abd';
+        let currentLocation = null;        // Current bus GPS location
+        let locationWatchId = null;        // GPS watch position ID
+        let locationBroadcastInterval = null; // Interval for broadcasting location
+        const stationNumber = 3;           // Station number
 
         // ========== INITIALIZATION ==========
         init();
 
         /**
          * Initialize the driver app
-         * Starts checking for passenger requests
+         * Starts GPS tracking and checking for passenger requests
          */
         function init() {
+            startLocationTracking();
             checkForPassengerRequest();
-            // Note: BLE advertising should be done using an external BLE tool
-            // Configure the tool with Service UUID: 12345678-1234-1234-1234-123456789abc
+        }
+
+        /**
+         * Start GPS location tracking for bus
+         */
+        function startLocationTracking() {
+            if (navigator.geolocation) {
+                locationWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        currentLocation = {
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            timestamp: Date.now()
+                        };
+                        updateGPSDisplay();
+                        // Broadcast location to passengers
+                        broadcastLocation();
+                    },
+                    (error) => {
+                        console.error('Geolocation error:', error);
+                        document.getElementById('gpsInfo').textContent = 'GPS: Error getting location';
+                    },
+                    { enableHighAccuracy: true, maximumAge: 1000 }
+                );
+            } else {
+                document.getElementById('gpsInfo').textContent = 'GPS: Not supported';
+            }
+        }
+
+        /**
+         * Update GPS display with current location
+         */
+        function updateGPSDisplay() {
+            if (currentLocation) {
+                document.getElementById('gpsInfo').textContent = 
+                    `GPS: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lon.toFixed(6)}`;
+            }
+        }
+
+        /**
+         * Broadcast bus location to passengers
+         * In production, this would be via WebSocket/Server
+         * For demo, uses localStorage
+         */
+        function broadcastLocation() {
+            if (currentLocation && hasReceivedRequest) {
+                // Store location data for passenger to read
+                localStorage.setItem('busLocation', JSON.stringify({
+                    lat: currentLocation.lat,
+                    lon: currentLocation.lon,
+                    timestamp: currentLocation.timestamp
+                }));
+            }
         }
 
         /**
@@ -250,21 +295,8 @@
         }
 
         /**
-         * Start BLE advertising instructions
-         * Note: Actual BLE advertising must be done using an external BLE tool
-         */
-        function startBluetoothAdvertising() {
-            console.log('BLE advertising should be started using external BLE tool');
-            console.log('Service UUID:', BUS_SERVICE_UUID);
-            console.log('Characteristic UUID:', RSSI_CHARACTERISTIC_UUID);
-            
-            // Update display to show BLE is ready
-            document.getElementById('bluetoothInfo').textContent = 'Bluetooth: Broadcasting (BLE Tool)';
-        }
-
-        /**
          * Handle passenger request
-         * Shows alert and starts BLE advertising
+         * Shows alert and starts broadcasting GPS location
          */
         function handlePassengerRequest(request) {
             hasReceivedRequest = true;
@@ -278,8 +310,13 @@
             const statusDisplay = document.getElementById('statusDisplay');
             statusDisplay.innerHTML = `<div class="alert-status">Disabled passenger waiting at station ${stationNumber}</div>`;
             
-            // Start BLE advertising (via external BLE tool)
-            startBluetoothAdvertising();
+            // Start broadcasting location more frequently
+            if (locationBroadcastInterval) {
+                clearInterval(locationBroadcastInterval);
+            }
+            locationBroadcastInterval = setInterval(() => {
+                broadcastLocation();
+            }, 1000); // Broadcast every second
             
             // Start voice recognition for driver input (optional)
             startVoiceRecognition();
