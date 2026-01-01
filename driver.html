@@ -148,21 +148,7 @@
         // ========== CHECK FOR PASSENGER REQUEST ==========
         function checkForPassengerRequest() {
             requestCheckInterval = setInterval(() => {
-                // Check for voice signal from user (when user speaks into microphone)
-                const voiceSignal = localStorage.getItem('userVoiceSignal');
-                if (voiceSignal && !hasReceivedRequest) {
-                    try {
-                        const signal = JSON.parse(voiceSignal);
-                        if (signal.hasInput && Date.now() - signal.timestamp < 10000) {
-                            handlePassengerRequest({ station: stationNumber });
-                            localStorage.removeItem('userVoiceSignal');
-                        }
-                    } catch (e) {
-                        console.error('Error parsing voice signal:', e);
-                    }
-                }
-                
-                // Also check for formal bus request
+                // Check for bus request from passenger
                 const requestData = localStorage.getItem('busRequest');
                 if (requestData && !hasReceivedRequest) {
                     try {
@@ -190,9 +176,6 @@
 
             // Speak the message
             speak(message);
-
-            // Start listening for voice input (this simulates receiving signal from user phone)
-            startVoiceRecognition();
 
             // Clear the request
             localStorage.removeItem('busRequest');
