@@ -1,129 +1,99 @@
 <!DOCTYPE html>
-<html lang="am">
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Bus – Driver</title>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-
-<style>
-body {
-    margin: 0;
-    background: #1a1a1a;
-    color: white;
-    font-family: Arial, sans-serif;
-    text-align: center;
-    transition: background 0.5s;
-}
-#status {
-    margin-top: 35vh;
-    font-size: 2.2rem;
-    font-weight: bold;
-}
-#gps {
-    position: absolute;
-    bottom: 20px;
-    width: 100%;
-    font-size: 1rem;
-    color: #aaa;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver - Final</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        body { margin: 0; background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; }
+        #status-box { margin-top: 30vh; padding: 20px; }
+        h1 { font-size: 3rem; margin: 0; }
+        p { font-size: 1.5rem; color: #aaa; }
+        #gps-log { position: absolute; bottom: 10px; width: 100%; font-size: 0.8rem; color: #555; }
+    </style>
 </head>
-
 <body>
 
-<div id="status">
-    አሽከርካሪ ንቁ<br>
-    <span style="font-size:1.2rem">
-        ተሳፋሪዎችን በመጠባበቅ ላይ…
-    </span>
-</div>
+    <div id="status-box">
+        <h1 id="main-text">ACTIVE</h1>
+        <p id="sub-text">Broadcasting GPS...</p>
+    </div>
+    <div id="gps-log">Initializing...</div>
 
-<div id="gps">በመገናኘት ላይ…</div>
+    <script>
+        // CONFIG
+        const MQTT_BROKER = "broker.hivemq.com";
+        const MQTT_PORT = 8000;
+        const CLIENT_ID = "driver_" + Math.random();
 
-<script>
-/* ================= CONFIG ================= */
-const AUDIO_BASE =
-  "https://robel494.github.io/bus/";
-/* ========================================== */
+        const mainText = document.getElementById("main-text");
+        const subText = document.getElementById("sub-text");
+        const gpsLog = document.getElementById("gps-log");
+        const synth = window.speechSynthesis;
 
-const statusDiv = document.getElementById("status");
-const gpsDiv = document.getElementById("gps");
+        // MQTT SETUP
+        const client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, CLIENT_ID);
 
-/* AUDIO */
-function playAudio(file) {
-    const audio = new Audio(AUDIO_BASE + file);
-    audio.play();
-}
+        client.connect({
+            useSSL: true,
+            onSuccess: () => {
+                gpsLog.innerText = "Connected | Sharing Location";
+                client.subscribe("smart_bus_project/driver_alerts");
+                startBroadcasting();
+            },
+            onFailure: () => { gpsLog.innerText = "Connection Failed"; }
+        });
 
-/* MQTT */
-const client = new Paho.MQTT.Client(
-    "broker.hivemq.com",
-    8884,
-    "driver_" + Math.random()
-);
+        // RECEIVE ALERT
+        client.onMessageArrived = (message) => {
+            const busNum = message.payloadString;
+            
+            // Visual Alert
+            document.body.style.background = "red";
+            mainText.innerText = "STOP!";
+            subText.innerHTML = `Passenger Requesting<br>Bus Number: ${busNum}`;
+            
+            // Audio Alert (Voice)
+            const utterance = new SpeechSynthesisUtterance("Alert. Passenger waiting for bus " + busNum);
+            utterance.rate = 1.1; // Slightly faster
+            synth.speak(utterance);
 
-client.connect({
-    useSSL: true,
-    onSuccess: () => {
-        gpsDiv.innerText = "ተገናኝቷል | GPS በመላክ ላይ";
-        client.subscribe("smart_bus_project/driver_alerts");
-        startGPS();
-    }
-});
+            // Vibrate Phone
+            if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
 
-/* RECEIVE PASSENGER ALERT */
-client.onMessageArrived = message => {
-    const data = JSON.parse(message.payloadString);
+            // Reset after 10 seconds
+            setTimeout(() => {
+                document.body.style.background = "#1a1a1a";
+                mainText.innerText = "ACTIVE";
+                subText.innerText = "Broadcasting GPS...";
+            }, 10000);
+        };
 
-    document.body.style.background = "red";
+        // GPS BROADCASTING LOOP
+        function startBroadcasting() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(pos => {
+                    const data = { 
+                        lat: pos.coords.latitude, 
+                        lon: pos.coords.longitude,
+                        speed: pos.coords.speed || 0 // Send speed if available
+                    };
+                    
+                    // Send to Cloud
+                    const msg = new Paho.MQTT.Message(JSON.stringify(data));
+                    msg.destinationName = "smart_bus_project/bus_location";
+                    client.send(msg);
 
-    statusDiv.innerHTML =
-        "አካል ጉዳተኛ ተሳፋሪ በመጠባበቅ ላይ<br>" +
-        "ጣቢያ: " + data.station + "<br>" +
-        "አውቶቡስ: " + data.bus;
-
-    playAudio("alert.wav");
-    navigator.vibrate?.([600, 300, 600]);
-
-    setTimeout(() => {
-        document.body.style.background = "#1a1a1a";
-        statusDiv.innerHTML =
-            "አሽከርካሪ ንቁ<br>" +
-            "<span style='font-size:1.2rem'>ተሳፋሪዎችን በመጠባበቅ ላይ…</span>";
-    }, 15000);
-};
-
-/* GPS */
-function startGPS() {
-    navigator.geolocation.watchPosition(
-        pos => {
-            const coords = {
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude
-            };
-
-            const msg = new Paho.MQTT.Message(JSON.stringify(coords));
-            msg.destinationName = "smart_bus_project/bus_location";
-            client.send(msg);
-
-            gpsDiv.innerText =
-                "GPS: " +
-                coords.lat.toFixed(5) +
-                ", " +
-                coords.lon.toFixed(5);
-        },
-        () => {
-            gpsDiv.innerText = "GPS ስህተት";
-        },
-        { enableHighAccuracy: true }
-    );
-}
-</script>
-
+                    // Update Driver Screen
+                    gpsLog.innerText = `Lat: ${data.lat.toFixed(5)} | Lon: ${data.lon.toFixed(5)}`;
+                }, err => {
+                    gpsLog.innerText = "GPS Permission Denied";
+                }, { enableHighAccuracy: true });
+            }
+        }
+    </script>
 </body>
-</html>
-
+</html
 
 
