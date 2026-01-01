@@ -1,86 +1,40 @@
 <!DOCTYPE html>
-<html lang="am">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Bus – Driver</title>
+    <title>Smart Bus - Driver</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        body { margin: 0; background: #001a33; font-family: Arial, sans-serif; color: white; text-align: center; }
-        #header { padding: 20px; background: #003366; font-size: 1.5rem; font-weight: bold; border-bottom: 3px solid yellow; }
-        #alert-display { height: 60vh; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: bold; padding: 20px; }
-        #status { font-size: 1rem; color: #00ff00; margin-top: 10px; }
-        .active-alert { background: red; animation: blink 1s infinite; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        body { margin:0; background:#111; color:white; font-family:sans-serif; text-align:center; transition:0.3s; }
+        #box { margin-top:35vh; }
+        h1 { font-size:3rem; }
     </style>
 </head>
 <body>
+    <div id="box">
+        <h1 id="msg">DRIVER ACTIVE</h1>
+        <p id="sub">Broadcasting Location...</p>
+    </div>
+    <script>
+        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "d_" + Math.random());
+        client.connect({useSSL: true, onSuccess: () => {
+            client.subscribe("smart_bus_project/driver_alerts");
+            navigator.geolocation.watchPosition(pos => {
+                const data = JSON.stringify({lat: pos.coords.latitude, lon: pos.coords.longitude});
+                client.send("smart_bus_project/bus_location", data);
+            }, null, {enableHighAccuracy:true});
+        }});
 
-<div id="header">የአውቶቡስ አሽከርካሪ መቆጣጠሪያ</div>
-<div id="alert-display">ዝግጁ...</div>
-<div id="status">MQTT በመገናኘት ላይ...</div>
-
-<script>
-/* ================= CONFIG ================= */
-const AUDIO_BASE = "https://robel494.github.io/bus/";
-const BUS_ID = "BUS_001"; // Unique ID for this bus
-/* ========================================== */
-
-const alertDisplay = document.getElementById("alert-display");
-const status = document.getElementById("status");
-
-// Audio setup
-const sounds = {
-    alert: new Audio(AUDIO_BASE + "Alert.wav"),
-    pickup: new Audio(AUDIO_BASE + "Pickup.wav"),
-    destination: new Audio(AUDIO_BASE + "Destination.wav")
-};
-
-/* --- MQTT: Receiving Alerts from Passengers --- */
-const client = new Paho.MQTT.Client("broker.hivemq.com", 8884, "driver_" + Math.random());
-
-client.connect({
-    useSSL: true,
-    onSuccess: () => {
-        status.innerText = "ተገናኝቷል | ምልክት በመጠባበቅ ላይ...";
-        client.subscribe("smart_bus_project/driver_alerts");
-    },
-    onFailure: () => { status.innerText = "ግንኙነት አልተሳካም"; }
-});
-
-client.onMessageArrived = (msg) => {
-    const data = JSON.parse(msg.payloadString);
-    
-    // Only respond if the message is for this bus or general
-    handleIncomingAlert(data.type);
-};
-
-function handleIncomingAlert(type) {
-    sounds.alert.play();
-    document.body.classList.add("active-alert");
-    
-    if (type === "pickup") {
-        alertDisplay.innerText = "ተሳፋሪ አለ! (Pickup)";
-        sounds.pickup.play();
-    } else if (type === "destination") {
-        alertDisplay.innerText = "መድረሻ (Destination)";
-        sounds.destination.play();
-    }
-
-    // Reset screen after 5 seconds
-    setTimeout(() => {
-        document.body.classList.remove("active-alert");
-        alertDisplay.innerText = "ዝግጁ...";
-    }, 5000);
-}
-
-/* --- Bluetooth: Advertising (Experimental) --- */
-/* Note: Mobile browsers currently have limited support for 
-   acting as a BLE Peripheral (Broadcaster) via Web Bluetooth. 
-   To make the Passenger app "Arrive" at 5cm, the Driver phone 
-   is best used with a BLE Broadcaster app (like 'nRF Connect') 
-   running in the background to send a constant signal.
-*/
-</script>
+        client.onMessageArrived = (m) => {
+            document.body.style.background = "red";
+            document.getElementById('msg').innerText = "PASSENGER!";
+            document.getElementById('sub').innerText = "Bus Requested: " + m.payloadString;
+            window.speechSynthesis.speak(new SpeechSynthesisUtterance("Passenger request for bus " + m.payloadString));
+            setTimeout(() => { 
+                document.body.style.background = "#111"; 
+                document.getElementById('msg').innerText = "DRIVER ACTIVE";
+            }, 10000);
+        };
+    </script>
 </body>
 </html>
