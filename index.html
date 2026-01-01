@@ -1,167 +1,144 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="am">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Bus - Hybrid System</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-    <style>
-        body { margin: 0; background: black; color: yellow; font-family: sans-serif; text-align: center; overflow: hidden; }
-        #main-btn { width: 100vw; height: 75vh; font-size: 2.5rem; font-weight: bold; background: yellow; border: none; transition: 0.3s; }
-        #dashboard { height: 25vh; background: #1a1a1a; display: flex; justify-content: space-around; align-items: center; border-top: 2px solid #333; }
-        .stat { color: #aaa; font-size: 0.9rem; }
-        .val { display: block; font-size: 1.6rem; color: #00ff00; font-weight: bold; }
-        #dest-overlay { display: none; position: fixed; top:0; width:100%; height:100%; background:black; padding-top:20px; z-index:100; }
-        .dest-opt { width: 90%; padding: 20px; margin: 10px; font-size: 1.2rem; background: #222; color: yellow; border: 1px solid yellow; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Bus – Passenger</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+
+<style>
+body{margin:0;background:black;font-family:Arial}
+#btn{
+width:100vw;height:100vh;font-size:3rem;
+background:yellow;color:black;border:none}
+#status{
+position:absolute;bottom:15px;width:100%;
+text-align:center;color:#aaa;font-size:1.1rem}
+</style>
 </head>
+
 <body>
+<button id="btn">ጀምር</button>
+<div id="status">ዝግጁ</div>
 
-    <button id="main-btn" onclick="startSystem()">TAP TO START<br><small>(Voice & Bluetooth)</small></button>
+<script>
+/* CONFIG */
+const AUDIO_BASE="https://github.com/robel494/bus/";
+const DEMO_SCALE=0.01; // cm demo
+const BT_THRESHOLD_CM=1500; // 15m
+const SPEED_MPS=0.6;
 
-    <div id="dashboard">
-        <div class="stat">MODE<span id="mode-val" class="val">GPS</span></div>
-        <div class="stat">DIST/RSSI<span id="dist-val" class="val">--</span></div>
-        <div class="stat">STATUS<span id="status-val" class="val">Standby</span></div>
-    </div>
+/* ELEMENTS */
+const btn=document.getElementById("btn");
+const status=document.getElementById("status");
 
-    <div id="dest-overlay">
-        <h3>Select Destination</h3>
-        <button class="dest-opt" onclick="setDest('Stadium', 0.0005)">Stadium (Near)</button>
-        <button class="dest-opt" onclick="setDest('Bole', 0.0020)">Bole (Far)</button>
-    </div>
+/* AUDIO */
+const play=f=>new Audio(AUDIO_BASE+f).play();
 
-    <script>
-        const btn = document.getElementById('main-btn');
-        const modeEl = document.getElementById('mode-val');
-        const distEl = document.getElementById('dist-val');
-        const statusEl = document.getElementById('status-val');
-        const synth = window.speechSynthesis;
+/* SPEECH */
+const SR=window.SpeechRecognition||webkitSpeechRecognition;
+const rec=new SR();
+rec.lang="en-US";
+rec.continuous=false;
 
-        let myLoc = null;
-        let busDevice = null;
-        let isOnBoard = false;
-        let isBluetoothActive = false;
+/* STATE */
+let user=null,bus=null,requested=false,arrived=false,destination=null;
 
-        // 1. MQTT Cloud Connection
-        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "p_" + Math.random());
-        client.connect({useSSL: true, onSuccess: () => { statusEl.innerText = "Cloud OK"; client.subscribe("smart_bus_project/bus_location"); }});
+/* MQTT */
+const client=new Paho.MQTT.Client(
+"broker.hivemq.com",8884,"user"+Math.random()
+);
 
-        // 2. Start System (Voice + GPS)
-        function startSystem() {
-            speak("System active. Say bus number.");
-            btn.style.background = "red";
-            btn.innerText = "LISTENING...";
-            
-            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.start();
+client.connect({
+useSSL:true,
+onSuccess(){
+status.innerText="ተገናኝቷል";
+client.subscribe("bus/location");
+client.subscribe("bus/near");
+}
+});
 
-            recognition.onresult = (e) => {
-                const busNum = e.results[0][0].transcript;
-                btn.style.background = "black";
-                btn.style.color = "yellow";
-                btn.innerText = "BUS " + busNum + " CALLED";
-                speak("Calling bus " + busNum);
-                
-                // Send alert to driver
-                const msg = new Paho.MQTT.Message(busNum);
-                msg.destinationName = "smart_bus_project/driver_alerts";
-                client.send(msg);
-            };
-        }
+/* GPS */
+navigator.geolocation.watchPosition(p=>{
+user={lat:p.coords.latitude,lon:p.coords.longitude};
+},{},{enableHighAccuracy:true});
 
-        // 3. Hybrid Tracking Logic
-        navigator.geolocation.watchPosition(pos => {
-            if (!isOnBoard) myLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-            else checkDestination(pos.coords.latitude, pos.coords.longitude);
-        }, null, {enableHighAccuracy: true});
+/* DISTANCE */
+function dist(a,b){
+const R=6371000;
+const dLat=(b.lat-a.lat)*Math.PI/180;
+const dLon=(b.lon-a.lon)*Math.PI/180;
+return R*2*Math.asin(Math.sqrt(
+Math.sin(dLat/2)**2+
+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*
+Math.sin(dLon/2)**2
+));
+}
 
-        client.onMessageArrived = (msg) => {
-            if (isOnBoard) return;
-            const bus = JSON.parse(msg.payloadString);
-            const meters = calcDist(myLoc.lat, myLoc.lon, bus.lat, bus.lon);
+/* RECEIVE BUS */
+client.onMessageArrived=m=>{
+const d=JSON.parse(m.payloadString);
+if(m.destinationName==="bus/location"){
+bus=d;
+if(!requested||arrived||!user) return;
 
-            // --- THE HYBRID SWITCH ---
-            if (meters > 15) {
-                // LONG RANGE: Use GPS
-                modeEl.innerText = "GPS";
-                distEl.innerText = meters.toFixed(0) + "m";
-                statusEl.innerText = "Approaching";
-            } else {
-                // SHORT RANGE: Trigger Bluetooth
-                modeEl.innerText = "BT-RSSI";
-                statusEl.innerText = "Searching...";
-                if (!isBluetoothActive) activateBluetooth();
-            }
-        };
+let dM=dist(user,bus)*DEMO_SCALE;
+let dCM=Math.round(dM*100);
 
-        async function activateBluetooth() {
-            isBluetoothActive = true;
-            speak("Bus nearby. Linking Bluetooth for arrival.");
-            try {
-                busDevice = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
-                const abortController = new AbortController();
-                busDevice.watchAdvertisements({ signal: abortController.signal });
-                
-                busDevice.addEventListener('advertisementreceived', (event) => {
-                    let rssi = event.rssi;
-                    distEl.innerText = rssi + " dBm";
-                    
-                    // Trigger arrival when phones are basically touching (-35dBm)
-                    if (rssi > -35) {
-                        arrival();
-                        abortController.abort();
-                    }
-                });
-            } catch(e) { console.log("BT Error or Cancelled"); isBluetoothActive = false; }
-        }
+if(dCM<=BT_THRESHOLD_CM){
+status.innerText=`Bluetooth ≈ ${dCM} ሴ.ሜ`;
+btn.innerText=`${Math.max(1,Math.round(dCM/50))} ሰከንድ`;
+}
 
-        function arrival() {
-            btn.style.background = "#00FF00";
-            btn.style.color = "black";
-            btn.innerText = "BUS ARRIVED";
-            speak("Bus is at the stop. Please board.");
-            if(navigator.vibrate) navigator.vibrate([500, 200, 500]);
-            
-            setTimeout(() => {
-                document.getElementById('dest-overlay').style.display = "block";
-                isOnBoard = true;
-            }, 4000);
-        }
+let eta=Math.max(1,Math.round(dM/SPEED_MPS));
+btn.innerText=eta+" ሰከንድ";
 
-        // 4. Destination Logic
-        let targetLoc = null;
-        function setDest(name, offset) {
-            targetLoc = { lat: myLoc.lat + offset, lon: myLoc.lon + offset, name: name };
-            document.getElementById('dest-overlay').style.display = "none";
-            btn.style.background = "blue";
-            btn.style.color = "white";
-            btn.innerText = "GOING TO " + name.toUpperCase();
-            speak("Heading to " + name);
-        }
+if(dCM<=30){
+arrived=true;
+btn.innerText="አውቶቡስ ደርሷል";
+btn.style.background="lime";
+play("arrived.wav");
+navigator.vibrate([800,400,800]);
+}
+}
 
-        function checkDestination(lat, lon) {
-            if (!targetLoc) return;
-            const d = calcDist(lat, lon, targetLoc.lat, targetLoc.lon);
-            distEl.innerText = (d * 1000).toFixed(0) + "m";
-            if (d < 0.01) { // 10 meters
-                btn.style.background = "red";
-                btn.innerText = "ARRIVED - GET OFF";
-                speak("You have reached " + targetLoc.name + ". Please exit safely.");
-                if(navigator.vibrate) navigator.vibrate([1000, 500, 1000]);
-                targetLoc = null;
-            }
-        }
+if(m.destinationName==="bus/near" && destination){
+play("unboard.wav");
+navigator.vibrate([1000,500,1000]);
+status.innerText="መውረድ ይዘጋጁ";
+}
+};
 
-        function calcDist(l1, o1, l2, o2) {
-            const R = 6371;
-            const dLat = (l2-l1)*Math.PI/180;
-            const dLon = (o2-o1)*Math.PI/180;
-            const a = Math.sin(dLat/2)**2 + Math.cos(l1*Math.PI/180)*Math.cos(l2*Math.PI/180)*Math.sin(dLon/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1000; // Return Meters
-        }
-        function speak(t) { synth.speak(new SpeechSynthesisUtterance(t)); }
-    </script>
+/* BUTTON */
+btn.onclick=()=>{
+if(!requested){
+play("listen.wav");
+btn.innerText="በመስማት ላይ…";
+btn.style.background="red";
+setTimeout(()=>rec.start(),800);
+}
+};
+
+/* VOICE RESULT */
+rec.onresult=e=>{
+const text=e.results[0][0].transcript.trim();
+if(!text)return;
+requested=true;
+play("sent.wav");
+btn.style.background="black";
+btn.style.color="yellow";
+btn.innerText="ጥያቄ ተልኳል";
+
+client.send(new Paho.MQTT.Message(JSON.stringify({
+bus:text,type:"blind"
+})).destinationName="bus/request");
+};
+
+/* DESTINATION */
+setTimeout(()=>{
+destination=prompt("መድረሻ ያስገቡ");
+if(destination) play("destination.wav");
+},15000);
+</script>
 </body>
 </html>
-
