@@ -1,128 +1,303 @@
 <!DOCTYPE html>
 <html lang="am">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Bus – Driver</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bus Station - Driver</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-<style>
-body {
-    margin: 0;
-    background: black;
-    color: white;
-    font-family: Arial, sans-serif;
-    text-align: center;
-}
-#main {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-}
-#message {
-    font-size: 2.2rem;
-    margin-bottom: 30px;
-}
-#debug {
-    font-size: 1rem;
-    color: #00ff00;
-    font-family: monospace;
-}
-button {
-    font-size: 2rem;
-    padding: 20px 40px;
-    border: none;
-    background: yellow;
-    color: black;
-}
-</style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 40px;
+            text-align: center;
+        }
+
+        .status-display {
+            font-size: 36px;
+            color: #333;
+            margin-bottom: 30px;
+            line-height: 1.6;
+            min-height: 150px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .alert-status {
+            color: #f5576c;
+            font-weight: bold;
+            animation: alertPulse 1s infinite;
+        }
+
+        @keyframes alertPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .gps-info {
+            font-size: 18px;
+            color: #666;
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+
+        .bluetooth-info {
+            font-size: 18px;
+            color: #666;
+            margin-top: 10px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+
+        .recording-indicator {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #999;
+        }
+
+        .status-indicator {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .status-indicator.active {
+            background: #4CAF50;
+            animation: pulse 1s infinite;
+        }
+
+        .status-indicator.inactive {
+            background: #ccc;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
 </head>
-
 <body>
-<div id="main">
-    <div id="message">ተሳፋሪዎችን በመጠበቅ ላይ...</div>
-    <button id="startBtn">ጀምር</button>
-    <div id="debug"></div>
-</div>
+    <div class="container">
+        <div class="status-display" id="statusDisplay">
+            <div>ተሳፋሪ በመጠበቅ ላይ</div>
+        </div>
 
-<script>
-/* ================= CONFIG ================= */
-const AUDIO_BASE = "https://robel494.github.io/bus/";
-const NEAR_RSSI = -40;
-/* ========================================= */
+        <div class="gps-info" id="gpsInfo">
+            GPS: በመፈለግ ላይ...
+        </div>
 
-const message = document.getElementById("message");
-const debug = document.getElementById("debug");
-const startBtn = document.getElementById("startBtn");
+        <div class="bluetooth-info" id="bluetoothInfo">
+            Bluetooth: --
+        </div>
 
-/* --- Audio --- */
-const sounds = {
-    alert: new Audio(AUDIO_BASE + "Alert.wav"),
-    pickup: new Audio(AUDIO_BASE + "Pickup.wav")
-};
+        <div class="recording-indicator" id="recordingIndicator" style="display: none;">
+            <span class="status-indicator active"></span>
+            <span>በመቅረጽ ላይ...</span>
+        </div>
+    </div>
 
-function play(name) {
-    sounds[name].currentTime = 0;
-    sounds[name].play().catch(()=>{});
-}
+    <script>
+        const audioBaseUrl = 'https://robel494.github.io/bus/';
+        let recognition;
+        let currentLocation = null;
+        let locationWatchId = null;
+        let hasReceivedRequest = false;
+        const stationNumber = 3;
 
-/* --- State --- */
-let pickupPlayed = false;
+        // Initialize
+        init();
 
-/* --- Notification --- */
-async function notifyPassenger() {
-    if (Notification.permission !== "granted") {
-        await Notification.requestPermission();
-    }
+        function init() {
+            startLocationTracking();
+            startVoiceRecognition();
+        }
 
-    if (Notification.permission === "granted") {
-        new Notification("Smart Bus", {
-            body: "አንድ ዓይነ ስውር ተሳፋሪ በጣቢያ 3 እየጠበቀ ነው 🚏"
-        });
-    }
-}
+        function playAudio(filename) {
+            const audio = new Audio(`${audioBaseUrl}${filename}`);
+            audio.play().catch(e => console.log('Audio play error:', e));
+        }
 
-/* --- Bluetooth --- */
-async function startBluetooth() {
-    try {
-        // 👇 THIS IS THE “PAIR” MOMENT
-        const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true
-        });
-
-        /* ✅ PAIR SUCCESS → NOTIFICATION + ALERT */
-        message.innerText =
-          "አንድ ዓይነ ስውር ተሳፋሪ በጣቢያ 3 እየጠበቀ ነው";
-        play("alert");
-        notifyPassenger();
-        navigator.vibrate?.(500);
-
-        /* Start proximity tracking */
-        await device.watchAdvertisements();
-
-        device.addEventListener("advertisementreceived", e => {
-            const rssi = e.rssi;
-            debug.innerText = `RSSI: ${rssi}`;
-
-            if (rssi >= NEAR_RSSI && !pickupPlayed) {
-                pickupPlayed = true;
-                message.innerText = "ተሳፋሪው ተቀብሏል";
-                play("pickup");
-                navigator.vibrate?.([300,200,300]);
+        function startLocationTracking() {
+            if (navigator.geolocation) {
+                locationWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        currentLocation = {
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude,
+                            accuracy: position.coords.accuracy
+                        };
+                        updateGPSDisplay();
+                        // In real app, send location to server/passenger device
+                        sendLocationUpdate();
+                    },
+                    (error) => {
+                        console.error('Geolocation error:', error);
+                        document.getElementById('gpsInfo').textContent = 'GPS: ስህተት';
+                    },
+                    { enableHighAccuracy: true, maximumAge: 1000 }
+                );
+            } else {
+                document.getElementById('gpsInfo').textContent = 'GPS: አይደገፍም';
             }
-        });
+        }
 
-    } catch (e) {
-        message.innerText = "ብሉቱዝ አልተገናኘም";
-        console.error(e);
-    }
-}
+        function updateGPSDisplay() {
+            if (currentLocation) {
+                document.getElementById('gpsInfo').textContent = 
+                    `GPS: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lon.toFixed(6)}`;
+            }
+        }
 
-startBtn.onclick = () => {
-    startBtn.style.display = "none";
-    startBluetooth();
-};
-</script>
+        function sendLocationUpdate() {
+            // In real app, this would send location to server/passenger device
+            // For demo, we simulate this
+            if (currentLocation && hasReceivedRequest) {
+                console.log('Sending location update:', currentLocation);
+                // This would be a WebSocket or HTTP request in real app
+            }
+        }
+
+        function startVoiceRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                console.log('Voice recognition not supported');
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.lang = 'am-ET';
+            recognition.continuous = true;
+            recognition.interimResults = false;
+
+            recognition.onstart = () => {
+                document.getElementById('recordingIndicator').style.display = 'block';
+            };
+
+            recognition.onresult = (event) => {
+                // Check all results for any speech input
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    console.log('Voice input received:', transcript);
+                    
+                    // Any voice input (even a single word) triggers the alert
+                    if (!hasReceivedRequest && transcript.trim().length > 0) {
+                        handlePassengerRequest();
+                        break;
+                    }
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Recognition error:', event.error);
+                if (event.error === 'no-speech') {
+                    // Restart recognition silently
+                    setTimeout(() => {
+                        if (recognition) {
+                            try {
+                                recognition.start();
+                            } catch (e) {
+                                console.log('Recognition already started');
+                            }
+                        }
+                    }, 1000);
+                }
+            };
+
+            recognition.onend = () => {
+                // Restart recognition
+                if (!hasReceivedRequest) {
+                    setTimeout(() => {
+                        if (recognition) {
+                            try {
+                                recognition.start();
+                            } catch (e) {
+                                console.log('Recognition restart error');
+                            }
+                        }
+                    }, 100);
+                }
+            };
+
+            try {
+                recognition.start();
+            } catch (e) {
+                console.log('Recognition start error:', e);
+            }
+        }
+
+        function handlePassengerRequest() {
+            hasReceivedRequest = true;
+            
+            const statusDisplay = document.getElementById('statusDisplay');
+            statusDisplay.innerHTML = `<div class="alert-status">አካል ጉዳተኛ ተሳፋሪ station ${stationNumber} ላይ እየጠበቀ ነው</div>`;
+            
+            playAudio('alert.wav');
+            
+            // Update Bluetooth info (simulated)
+            updateBluetoothInfo();
+            
+            // In real app, start sending location updates to passenger
+            if (currentLocation) {
+                sendLocationUpdate();
+            }
+        }
+
+        function updateBluetoothInfo() {
+            // Simulate Bluetooth RSSI
+            // In real app, this would use Web Bluetooth API
+            let rssi = -80; // Simulated RSSI value (weak signal initially)
+            document.getElementById('bluetoothInfo').textContent = `Bluetooth: ${rssi} dBm`;
+        }
+
+        // Simulate Bluetooth RSSI updates (in real app, this would come from actual Bluetooth)
+        let simulatedDistance = 5000; // Start at 5000cm (50m)
+        setInterval(() => {
+            if (hasReceivedRequest) {
+                // Simulate bus approaching - distance decreases
+                simulatedDistance = Math.max(0, simulatedDistance - 50);
+                
+                // Convert distance to RSSI: closer = higher (less negative) RSSI
+                // When distance > 2000cm (20m), use GPS, otherwise use RSSI
+                if (simulatedDistance <= 2000) {
+                    // RSSI ranges from -100 (far) to -30 (very close)
+                    const rssi = -100 + ((2000 - simulatedDistance) / 2000) * 70;
+                    document.getElementById('bluetoothInfo').textContent = `Bluetooth: ${Math.round(rssi)} dBm`;
+                } else {
+                    document.getElementById('bluetoothInfo').textContent = `Bluetooth: -- (using GPS)`;
+                }
+                
+                // In real app, send location/RSSI to passenger device
+                sendLocationUpdate();
+            }
+        }, 1000);
+    </script>
 </body>
 </html>
+
+
+
