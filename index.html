@@ -1,182 +1,203 @@
 <!DOCTYPE html>
-<html lang="am">
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Bus – Passenger</title>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-
-<style>
-body {
-    margin: 0;
-    background: black;
-    font-family: Arial, sans-serif;
-    overflow: hidden;
-}
-#btn {
-    width: 100vw;
-    height: 100vh;
-    font-size: 3rem;
-    font-weight: bold;
-    background: yellow;
-    color: black;
-    border: none;
-}
-#status {
-    position: absolute;
-    bottom: 15px;
-    width: 100%;
-    text-align: center;
-    color: #aaa;
-    font-size: 1.1rem;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Passenger - Final</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        body { margin: 0; background: black; color: yellow; font-family: sans-serif; overflow: hidden; text-align: center; }
+        
+        /* BIG BUTTON STYLES */
+        #main-btn { width: 100vw; height: 80vh; font-size: 2.5rem; font-weight: bold; background: yellow; color: black; border: none; cursor: pointer; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        
+        /* INFO DASHBOARD (dBm, CMS) */
+        #dashboard { height: 20vh; background: #222; display: flex; justify-content: space-around; align-items: center; border-top: 2px solid #444; }
+        .stat-box { font-size: 1.2rem; color: #fff; }
+        .stat-val { font-size: 1.8rem; font-weight: bold; color: #00ff00; display: block; }
+        
+        /* DESTINATION MENU (Hidden by default) */
+        #dest-menu { display: none; position: absolute; top: 0; width: 100%; height: 100%; background: black; z-index: 10; padding-top: 50px; }
+        .dest-btn { width: 90%; padding: 20px; margin: 10px; font-size: 1.5rem; background: #333; color: white; border: 1px solid white; }
+    </style>
 </head>
-
 <body>
 
-<button id="btn">ጀምር</button>
-<div id="status">በመገናኘት ላይ…</div>
+    <button id="main-btn" onclick="startListening()">
+        <div>TAP TO START</div>
+        <div style="font-size: 1rem; margin-top: 10px; opacity: 0.7;">Say Bus Number</div>
+    </button>
 
-<script>
-/* ================= CONFIG ================= */
-const STATION_NUMBER = 3;
-const DEMO_MODE = true;      // For indoor demo
-const DEMO_SCALE = 0.02;     // Shrinks distance for demo
-const AUDIO_BASE = "https://robel494.github.io/bus/";
-/* ========================================== */
+    <div id="dashboard">
+        <div class="stat-box">SIGNAL<span class="stat-val" id="dbm-val">-- dBm</span></div>
+        <div class="stat-box">DIST<span class="stat-val" id="dist-val">-- cm</span></div>
+        <div class="stat-box">TIME<span class="stat-val" id="time-val">-- sec</span></div>
+    </div>
 
-const btn = document.getElementById("btn");
-const status = document.getElementById("status");
+    <div id="dest-menu">
+        <h2>Select Destination</h2>
+        <button class="dest-btn" onclick="setDestination('Stadium', 0.005)">Stadium (Near)</button>
+        <button class="dest-btn" onclick="setDestination('Bole', 0.010)">Bole (Far)</button>
+    </div>
 
-function playAudio(file) {
-    const audio = new Audio(AUDIO_BASE + file);
-    audio.play();
-}
+    <script>
+        // --- CONFIGURATION ---
+        const MQTT_BROKER = "broker.hivemq.com";
+        const MQTT_PORT = 8000;
+        const TOPIC_BUS = "smart_bus_project/bus_location";
+        const TOPIC_DRIVER = "smart_bus_project/driver_alerts";
+        
+        // --- STATE VARIABLES ---
+        let myLoc = null;      // Where the passenger is waiting
+        let destLoc = null;    // Where the passenger wants to go
+        let isOnBoard = false; // False = waiting, True = on bus
+        let busNumber = "";
 
-/* Speech Recognition */
-const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
-const recognition = new SpeechRecognition();
-recognition.lang = "en-US";
-recognition.continuous = false;
+        // UI Elements
+        const btn = document.getElementById("main-btn");
+        const dbmEl = document.getElementById("dbm-val");
+        const distEl = document.getElementById("dist-val");
+        const timeEl = document.getElementById("time-val");
+        const synth = window.speechSynthesis;
 
-let userCoords = null;
-let arrived = false;
+        // 1. SETUP MQTT
+        const client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, "pass_" + Math.random());
+        
+        client.connect({ useSSL: true, onSuccess: () => {
+            console.log("Connected to Cloud");
+            client.subscribe(TOPIC_BUS);
+            speak("System Ready. Tap screen.");
+        }});
 
-/* MQTT */
-const client = new Paho.MQTT.Client(
-    "broker.hivemq.com",
-    8884,
-    "user_" + Math.random()
-);
+        // 2. SETUP GPS (High Accuracy for Table Demo)
+        navigator.geolocation.watchPosition(pos => {
+            // Update "My Location" only if I am NOT on the bus yet
+            if (!isOnBoard && !myLoc) {
+                myLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+            }
+            
+            // If I am on the bus, my location IS the bus location (roughly)
+            if (isOnBoard) {
+                checkDestinationArrival(pos.coords.latitude, pos.coords.longitude);
+            }
+        }, err => console.log(err), { enableHighAccuracy: true });
 
-client.connect({
-    useSSL: true,
-    onSuccess: () => {
-        status.innerText =
-            "ተገናኝቷል | አውቶቡስ በመቅረብ ላይ…" +
-            (DEMO_MODE ? " (Demo)" : "");
-        client.subscribe("smart_bus_project/bus_location");
-    }
-});
+        // 3. LISTEN FOR BUS MOVEMENT
+        client.onMessageArrived = msg => {
+            if (isOnBoard) return; // Stop tracking bus if we are already inside
+            if (!myLoc) return;    // Wait until we have our own GPS
 
-/* GPS */
-navigator.geolocation.watchPosition(
-    pos => {
-        userCoords = {
-            lat: pos.coords.latitude,
-            lon: pos.coords.longitude
+            const bus = JSON.parse(msg.payloadString);
+            
+            // Calculate Distance in Meters
+            const meters = calculateDistance(myLoc.lat, myLoc.lon, bus.lat, bus.lon);
+            const cm = Math.round(meters * 100); // Convert to cm for table demo
+            
+            // Simulate dBm (Signal Strength)
+            // Closer = Higher number (e.g. -30), Farther = Lower (e.g. -90)
+            const simulated_dbm = Math.round(-10 * Math.log10(meters || 1) - 40); 
+            
+            // Calculate Time (Assuming walking speed 1m/s for demo)
+            const seconds = Math.round(meters / 1.0); 
+
+            // Update Screen
+            dbmEl.innerText = simulated_dbm + " dBm";
+            distEl.innerText = cm + " cm";
+            timeEl.innerText = seconds + " s";
+
+            // LOGIC: BUS ARRIVED? (Within 300cm / 3 meters)
+            if (cm < 300) {
+                btn.style.background = "#00FF00"; // Green
+                btn.innerText = "BUS ARRIVED";
+                speak("Bus is here. Please board.");
+                
+                // Switch to Destination Mode after 5 seconds
+                setTimeout(() => {
+                    isOnBoard = true;
+                    document.getElementById("dest-menu").style.display = "block";
+                    speak("Select your destination.");
+                }, 5000);
+            } else {
+                btn.innerText = busNumber ? `BUS ${busNumber} COMING` : "TRACKING...";
+            }
         };
-    },
-    () => {
-        status.innerText = "እባክዎ GPS ፍቃድ ይስጡ";
-    },
-    { enableHighAccuracy: true }
-);
 
-/* Distance calculation */
-function calcDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(lat1 * Math.PI / 180) *
-        Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+        // 4. MICROPHONE LOGIC
+        function startListening() {
+            if (isOnBoard) return; // Disable if already selecting destination
 
-/* Receive bus location */
-client.onMessageArrived = msg => {
-    if (!userCoords || arrived) return;
+            btn.style.background = "red";
+            btn.innerText = "LISTENING...";
+            
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = 'en-US';
+            recognition.start();
 
-    const bus = JSON.parse(msg.payloadString);
-    let distance = calcDistance(
-        userCoords.lat,
-        userCoords.lon,
-        bus.lat,
-        bus.lon
-    );
+            recognition.onresult = (event) => {
+                busNumber = event.results[0][0].transcript;
+                btn.style.background = "black";
+                btn.style.color = "yellow";
+                btn.innerHTML = `BUS ${busNumber}<br>CALLED`;
+                speak("Calling bus " + busNumber);
 
-    if (DEMO_MODE) distance *= DEMO_SCALE;
+                // Send Alert to Driver
+                const message = new Paho.MQTT.Message(busNumber);
+                message.destinationName = TOPIC_DRIVER;
+                client.send(message);
+            };
 
-    const eta = Math.max(1, Math.round((distance / 0.5) * 2));
+            recognition.onerror = () => {
+                btn.style.background = "yellow";
+                btn.innerText = "TRY AGAIN";
+            };
+        }
 
-    if (distance <= 0.002) {
-        arrived = true;
-        btn.innerText = "አውቶቡስ ደርሷል";
-        btn.style.background = "#00ff00";
-        playAudio("arrived.wav");
-        navigator.vibrate?.([700, 400, 700]);
-        status.innerText = "አውቶቡስ ወደ ጣቢያው ደርሷል";
-    } else {
-        btn.innerText = eta + " ደቂቃ ቀርቷል";
-        status.innerText = "አውቶቡስ በመቅረብ ላይ…";
-    }
-};
+        // 5. DESTINATION LOGIC
+        function setDestination(name, offset) {
+            // Fake destination coordinates just slightly away from start
+            destLoc = { 
+                lat: myLoc.lat + offset, 
+                lon: myLoc.lon + offset,
+                name: name
+            };
+            document.getElementById("dest-menu").style.display = "none";
+            btn.style.background = "blue";
+            btn.style.color = "white";
+            btn.innerText = "NEXT STOP: " + name;
+            speak("Destination set to " + name);
+        }
 
-/* Button click */
-btn.onclick = () => {
-    playAudio("listen.wav");
-    btn.innerText = "በመስማት ላይ…";
-    btn.style.background = "red";
-    setTimeout(() => recognition.start(), 600);
-};
+        function checkDestinationArrival(currentLat, currentLon) {
+            if (!destLoc) return;
+            
+            const distToDest = calculateDistance(currentLat, currentLon, destLoc.lat, destLoc.lon);
+            
+            // Update Dashboard for "Distance to Destination"
+            distEl.innerText = Math.round(distToDest * 1000) + " m";
+            timeEl.innerText = "--"; 
 
-/* Voice recognition */
-recognition.onresult = e => {
-    const transcript = e.results[0][0].transcript.trim();
-    if (!transcript) {
-        // Restart listening if nothing spoken
-        btn.innerText = "በመስማት ላይ…";
-        recognition.start();
-        return;
-    }
+            // If within 10 meters of destination target
+            if (distToDest < 0.01) { 
+                btn.style.background = "red";
+                btn.innerText = "GET OFF NOW";
+                if (navigator.vibrate) navigator.vibrate([1000, 500, 1000]);
+                speak("You have reached " + destLoc.name + ". Please exit.");
+                destLoc = null; // Stop checking
+            }
+        }
 
-    const busNumber = transcript;
-    arrived = false;
+        // MATH HELPER
+        function speak(text) {
+            synth.speak(new SpeechSynthesisUtterance(text));
+        }
 
-    const payload = {
-        bus: busNumber,
-        station: STATION_NUMBER,
-        type: "disabled"
-    };
-    const msg = new Paho.MQTT.Message(JSON.stringify(payload));
-    msg.destinationName = "smart_bus_project/driver_alerts";
-    client.send(msg);
-
-    playAudio("sent.wav");
-
-    btn.innerText = "ጥያቄ ተልኳል";
-    btn.style.background = "black";
-    btn.style.color = "yellow";
-    status.innerText = "አውቶቡስ በመቅረብ ላይ…";
-};
-</script>
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Radius in meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+    </script>
 </body>
 </html>
-
-
