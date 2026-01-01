@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-<title>Smart Bus – Passenger</title>
+<title>Smart Bus – Voice Passenger</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
 
@@ -12,7 +11,7 @@
 body {
     margin: 0;
     height: 100vh;
-    background: #0f172a;
+    background: #020617;
     color: white;
     font-family: Arial, Helvetica, sans-serif;
     display: flex;
@@ -22,54 +21,49 @@ body {
 }
 
 h1 {
-    font-size: 2.2rem;
-}
-
-input {
-    margin-top: 15px;
-    padding: 12px;
-    font-size: 1.1rem;
-    width: 220px;
-    text-align: center;
-    border-radius: 8px;
-    border: none;
+    font-size: 2rem;
 }
 
 button {
-    margin-top: 15px;
-    padding: 12px 24px;
-    font-size: 1.1rem;
+    margin-top: 25px;
+    padding: 18px 28px;
+    font-size: 1.2rem;
     border: none;
-    border-radius: 8px;
+    border-radius: 12px;
     background: #22c55e;
     color: black;
-    cursor: pointer;
 }
 
 #status {
-    margin-top: 20px;
+    margin-top: 25px;
     font-size: 1.1rem;
     color: #ccc;
+    text-align: center;
 }
 </style>
 </head>
 
 <body>
 
-<h1>Find My Bus</h1>
+<h1>Smart Bus</h1>
 
-<input id="busInput" placeholder="Enter Bus Number" />
+<button onclick="startVoice()">🎤 Speak Bus Number</button>
 
-<button onclick="sendAlert()">Notify Driver</button>
-
-<div id="status">Waiting…</div>
+<div id="status">Tap the button and speak</div>
 
 <script>
 const statusEl = document.getElementById("status");
-const busInput = document.getElementById("busInput");
 
-let passengerLocation = null;
-let busLocation = null;
+/* ==============================
+   SPEECH SETUP
+================================ */
+const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const recognition = new SpeechRecognition();
+recognition.lang = "en-US";
+recognition.continuous = false;
+recognition.interimResults = false;
 
 /* ==============================
    MQTT
@@ -77,43 +71,72 @@ let busLocation = null;
 const client = new Paho.MQTT.Client(
     "broker.hivemq.com",
     8884,
-    "user_" + Math.random().toString(16).substr(2, 8)
+    "blind_user_" + Math.random().toString(16).substr(2, 8)
 );
 
 client.connect({
     useSSL: true,
     onSuccess: () => {
+        speak("Connected. Please say your bus number.");
         statusEl.innerText = "Connected";
-        client.subscribe("smart_bus_project/bus_location");
         getUserLocation();
+        client.subscribe("smart_bus_project/bus_location");
     }
 });
 
 /* ==============================
+   START VOICE
+================================ */
+function startVoice() {
+    speak("Listening. Please say your bus number.");
+    recognition.start();
+}
+
+/* ==============================
+   SPEECH → TEXT
+================================ */
+recognition.onresult = event => {
+    const text = event.results[0][0].transcript;
+    statusEl.innerText = "Heard: " + text;
+
+    speak("Bus " + text + ". Alerting the driver.");
+    sendAlert(text);
+};
+
+recognition.onerror = () => {
+    speak("Sorry. I did not understand. Please try again.");
+};
+
+/* ==============================
    SEND ALERT
 ================================ */
-function sendAlert() {
-    const bus = busInput.value.trim();
-    if (!bus) return;
-
+function sendAlert(bus) {
     const msg = new Paho.MQTT.Message(bus);
     msg.destinationName = "smart_bus_project/driver_alerts";
     client.send(msg);
+}
 
-    statusEl.innerText = "Alert sent to driver";
+/* ==============================
+   TEXT → SPEECH
+================================ */
+function speak(text) {
+    speechSynthesis.cancel();
+    speechSynthesis.speak(
+        new SpeechSynthesisUtterance(text)
+    );
 }
 
 /* ==============================
    USER GPS
 ================================ */
+let userLoc = null;
+let busLoc = null;
+
 function getUserLocation() {
-    if (!navigator.geolocation) {
-        statusEl.innerText = "GPS not supported";
-        return;
-    }
+    if (!navigator.geolocation) return;
 
     navigator.geolocation.getCurrentPosition(pos => {
-        passengerLocation = {
+        userLoc = {
             lat: pos.coords.latitude,
             lon: pos.coords.longitude
         };
@@ -121,39 +144,34 @@ function getUserLocation() {
 }
 
 /* ==============================
-   RECEIVE BUS GPS
+   BUS GPS & PROXIMITY
 ================================ */
 client.onMessageArrived = msg => {
     try {
-        busLocation = JSON.parse(msg.payloadString);
-        updateProximity();
+        busLoc = JSON.parse(msg.payloadString);
+        checkDistance();
     } catch {}
 };
 
-/* ==============================
-   DISTANCE (RSSI SIMULATION)
-================================ */
-function updateProximity() {
-    if (!passengerLocation || !busLocation) return;
+function checkDistance() {
+    if (!userLoc || !busLoc) return;
 
     const d = distance(
-        passengerLocation.lat,
-        passengerLocation.lon,
-        busLocation.lat,
-        busLocation.lon
+        userLoc.lat,
+        userLoc.lon,
+        busLoc.lat,
+        busLoc.lon
     );
 
-    if (d < 0.3) {
-        statusEl.innerText = "Bus is VERY CLOSE (" + d.toFixed(2) + " km)";
-    } else if (d < 1) {
-        statusEl.innerText = "Bus nearby (" + d.toFixed(2) + " km)";
-    } else {
-        statusEl.innerText = "Bus far (" + d.toFixed(2) + " km)";
+    if (d < 0.2) {
+        speak("Your bus is arriving now.");
+    } else if (d < 0.5) {
+        speak("Your bus is very close.");
     }
 }
 
 /* ==============================
-   HAVERSINE FORMULA
+   DISTANCE
 ================================ */
 function distance(lat1, lon1, lat2, lon2) {
     const R = 6371;
