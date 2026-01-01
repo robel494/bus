@@ -13,7 +13,6 @@ body {
     font-family: Arial, sans-serif;
     text-align: center;
 }
-
 #main {
     display: flex;
     flex-direction: column;
@@ -21,12 +20,10 @@ body {
     align-items: center;
     height: 100vh;
 }
-
 #message {
     font-size: 2.2rem;
     margin-bottom: 30px;
 }
-
 #debug {
     font-size: 1rem;
     color: #00ff00;
@@ -52,7 +49,7 @@ button {
 <script>
 /* ================= CONFIG ================= */
 const AUDIO_BASE = "https://robel494.github.io/bus/";
-const NEAR_RSSI = -40;   // VERY close (touching / <20cm)
+const NEAR_RSSI = -40;
 /* ========================================= */
 
 const message = document.getElementById("message");
@@ -65,39 +62,49 @@ const sounds = {
     pickup: new Audio(AUDIO_BASE + "Pickup.wav")
 };
 
-function play(sound) {
-    sounds[sound].currentTime = 0;
-    sounds[sound].play().catch(()=>{});
+function play(name) {
+    sounds[name].currentTime = 0;
+    sounds[name].play().catch(()=>{});
 }
 
 /* --- State --- */
-let passengerDetected = false;
 let pickupPlayed = false;
+
+/* --- Notification --- */
+async function notifyPassenger() {
+    if (Notification.permission !== "granted") {
+        await Notification.requestPermission();
+    }
+
+    if (Notification.permission === "granted") {
+        new Notification("Smart Bus", {
+            body: "አንድ ዓይነ ስውር ተሳፋሪ በጣቢያ 3 እየጠበቀ ነው 🚏"
+        });
+    }
+}
 
 /* --- Bluetooth --- */
 async function startBluetooth() {
     try {
+        // 👇 THIS IS THE “PAIR” MOMENT
         const device = await navigator.bluetooth.requestDevice({
             acceptAllDevices: true
         });
 
+        /* ✅ PAIR SUCCESS → NOTIFICATION + ALERT */
+        message.innerText =
+          "አንድ ዓይነ ስውር ተሳፋሪ በጣቢያ 3 እየጠበቀ ነው";
+        play("alert");
+        notifyPassenger();
+        navigator.vibrate?.(500);
+
+        /* Start proximity tracking */
         await device.watchAdvertisements();
 
-        device.addEventListener("advertisementreceived", event => {
-            const rssi = event.rssi;
-
+        device.addEventListener("advertisementreceived", e => {
+            const rssi = e.rssi;
             debug.innerText = `RSSI: ${rssi}`;
 
-            // First time passenger detected
-            if (!passengerDetected) {
-                passengerDetected = true;
-                message.innerText =
-                  "አንድ ዓይነ ስውር ተሳፋሪ በጣቢያ 3 እየጠበቀ ነው";
-                play("alert");
-                navigator.vibrate?.(500);
-            }
-
-            // VERY NEAR → PICKUP
             if (rssi >= NEAR_RSSI && !pickupPlayed) {
                 pickupPlayed = true;
                 message.innerText = "ተሳፋሪው ተቀብሏል";
