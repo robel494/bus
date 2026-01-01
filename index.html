@@ -1,180 +1,123 @@
 <!DOCTYPE html>
 <html lang="am">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Bus – Passenger</title>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-
-<style>
-body {
-    margin: 0;
-    background: black;
-    font-family: Arial, sans-serif;
-    overflow: hidden;
-}
-#btn {
-    width: 100vw;
-    height: 100vh;
-    font-size: 3rem;
-    font-weight: bold;
-    background: yellow;
-    color: black;
-    border: none;
-}
-#status {
-    position: absolute;
-    bottom: 15px;
-    width: 100%;
-    text-align: center;
-    color: #aaa;
-    font-size: 1.1rem;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Bus – Proximity</title>
+    <style>
+        body { margin: 0; background: black; font-family: Arial, sans-serif; overflow: hidden; color: white; }
+        #btn { width: 100vw; height: 100vh; font-size: 2.5rem; font-weight: bold; background: yellow; color: black; border: none; }
+        #status { position: absolute; bottom: 80px; width: 100%; text-align: center; color: #aaa; font-size: 1.1rem; }
+        #debug { position: absolute; top: 20px; width: 100%; text-align: center; font-family: monospace; color: #00ff00; }
+    </style>
 </head>
-
 <body>
 
+<div id="debug">GPS: በመፈለግ ላይ... | Bluetooth: --</div>
 <button id="btn">ጀምር</button>
-<div id="status">በመገናኘት ላይ…</div>
+<div id="status">ለመጀመር ቢጫውን ይጫኑ</div>
 
 <script>
 /* ================= CONFIG ================= */
-const STATION_NUMBER = 3;
-const DEMO_MODE = true;      // For indoor demo
-const DEMO_SCALE = 0.02;     // Shrinks distance for demo
-const AUDIO_BASE = "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO_NAME/";
+const AUDIO_BASE = "https://robel494.github.io/bus/";
+const ARRIVAL_THRESHOLD_CM = 5; // Trigger "Arrived" only at 5cm
 /* ========================================== */
 
 const btn = document.getElementById("btn");
 const status = document.getElementById("status");
+const debug = document.getElementById("debug");
 
-function playAudio(file) {
-    const audio = new Audio(AUDIO_BASE + file);
-    audio.play();
+// Audio setup
+const sounds = {
+    destination: new Audio(AUDIO_BASE + "Destination.wav"),
+    alert: new Audio(AUDIO_BASE + "Alert.wav"),
+    arrived: new Audio(AUDIO_BASE + "Arrived.wav"),
+    sent: new Audio(AUDIO_BASE + "sent.wav"),
+    listen: new Audio(AUDIO_BASE + "Listen.wav"),
+    pickup: new Audio(AUDIO_BASE + "Pickup.wav"),
+    unboard: new Audio(AUDIO_BASE + "Unboard.wav")
+};
+
+function play(key) {
+    if(sounds[key]) {
+        sounds[key].currentTime = 0;
+        sounds[key].play().catch(e => console.log("Audio play blocked"));
+    }
 }
 
-/* Speech Recognition */
-const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
+/* --- Bluetooth RSSI Logic --- */
+function rssiToCm(rssi) {
+    const txPower = -59; // Reference RSSI at 1 meter
+    if (rssi == 0) return 999;
+    const ratio = (txPower - rssi) / (10 * 2);
+    return Math.round(Math.pow(10, ratio) * 100); 
+}
+
+async function initBluetooth() {
+    try {
+        const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+        const abortController = new AbortController();
+        await device.watchAdvertisements({ signal: abortController.signal });
+
+        device.addEventListener('advertisementreceived', (event) => {
+            const rssi = event.rssi;
+            const distCm = rssiToCm(rssi);
+            const time = new Date().getSeconds();
+
+            debug.innerText = `ጊዜ: ${time}ሰ | RSSI: ${rssi} | ርቀት: ${distCm}cm`;
+
+            if (distCm <= ARRIVAL_THRESHOLD_CM) {
+                btn.innerText = "አውቶቡስ ደርሷል";
+                btn.style.background = "#00ff00";
+                play('arrived');
+                navigator.vibrate?.([500, 200, 500]);
+            }
+        });
+    } catch (e) {
+        status.innerText = "ብሉቱዝ አልተገናኘም";
+    }
+}
+
+/* --- GPS Logic --- */
+navigator.geolocation.watchPosition(pos => {
+    const lat = pos.coords.latitude.toFixed(5);
+    const lon = pos.coords.longitude.toFixed(5);
+    // Note: We display GPS here, but Arrived is handled by Bluetooth
+    if (btn.innerText !== "አውቶቡስ ደርሷል") {
+        status.innerText = `GPS: ${lat}, ${lon}`;
+    }
+}, null, { enableHighAccuracy: true });
+
+/* --- Speech Recognition --- */
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const recognition = new SpeechRecognition();
 recognition.lang = "en-US";
-recognition.continuous = false;
 
-let userCoords = null;
-let arrived = false;
-
-/* MQTT */
-const client = new Paho.MQTT.Client(
-    "broker.hivemq.com",
-    8884,
-    "user_" + Math.random()
-);
-
-client.connect({
-    useSSL: true,
-    onSuccess: () => {
-        status.innerText =
-            "ተገናኝቷል | አውቶቡስ በመቅረብ ላይ…" +
-            (DEMO_MODE ? " (Demo)" : "");
-        client.subscribe("smart_bus_project/bus_location");
-    }
-});
-
-/* GPS */
-navigator.geolocation.watchPosition(
-    pos => {
-        userCoords = {
-            lat: pos.coords.latitude,
-            lon: pos.coords.longitude
-        };
-    },
-    () => {
-        status.innerText = "እባክዎ GPS ፍቃድ ይስጡ";
-    },
-    { enableHighAccuracy: true }
-);
-
-/* Distance calculation */
-function calcDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(lat1 * Math.PI / 180) *
-        Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-/* Receive bus location */
-client.onMessageArrived = msg => {
-    if (!userCoords || arrived) return;
-
-    const bus = JSON.parse(msg.payloadString);
-    let distance = calcDistance(
-        userCoords.lat,
-        userCoords.lon,
-        bus.lat,
-        bus.lon
-    );
-
-    if (DEMO_MODE) distance *= DEMO_SCALE;
-
-    const eta = Math.max(1, Math.round((distance / 0.5) * 2));
-
-    if (distance <= 0.02) {
-        arrived = true;
-        btn.innerText = "አውቶቡስ ደርሷል";
-        btn.style.background = "#00ff00";
-        playAudio("arrived.wav");
-        navigator.vibrate?.([700, 400, 700]);
-        status.innerText = "አውቶቡስ ወደ ጣቢያው ደርሷል";
-    } else {
-        btn.innerText = eta + " ደቂቃ ቀርቷል";
-        status.innerText = "አውቶቡስ በመቅረብ ላይ…";
-    }
-};
-
-/* Button click */
-btn.onclick = () => {
-    playAudio("listen.wav");
-    btn.innerText = "በመስማት ላይ…";
-    btn.style.background = "red";
-    setTimeout(() => recognition.start(), 600);
-};
-
-/* Voice recognition */
 recognition.onresult = e => {
-    const transcript = e.results[0][0].transcript.trim();
-    if (!transcript) {
-        // Restart listening if nothing spoken
-        btn.innerText = "በመስማት ላይ…";
-        recognition.start();
-        return;
-    }
-
-    const busNumber = transcript;
-    arrived = false;
-
-    const payload = {
-        bus: busNumber,
-        station: STATION_NUMBER,
-        type: "disabled"
-    };
-    const msg = new Paho.MQTT.Message(JSON.stringify(payload));
-    msg.destinationName = "smart_bus_project/driver_alerts";
-    client.send(msg);
-
-    playAudio("sent.wav");
-
-    btn.innerText = "ጥያቄ ተልኳል";
+    const transcript = e.results[0][0].transcript.toLowerCase();
+    
+    // Command Logic
+    if (transcript.includes("pickup")) play('pickup');
+    if (transcript.includes("destination")) play('destination');
+    if (transcript.includes("stop")) play('unboard');
+    
+    play('sent');
+    btn.innerText = "ትእዛዝ ተልኳል";
     btn.style.background = "black";
     btn.style.color = "yellow";
-    status.innerText = "አውቶቡስ በመቅረብ ላይ…";
 };
+
+btn.onclick = () => {
+    play('listen');
+    btn.innerText = "በመስማት ላይ...";
+    btn.style.background = "red";
+    
+    // Initialize Bluetooth on first click
+    initBluetooth();
+    
+    setTimeout(() => recognition.start(), 1000);
+};
+
 </script>
 </body>
 </html>
