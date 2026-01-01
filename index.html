@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="am">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -106,76 +106,96 @@
     </style>
 </head>
 <body>
-    <!-- Start Screen -->
-    <button class="start-button" id="startButton">ጀምር</button>
+    <!-- Start Screen - Full screen button to begin -->
+    <button class="start-button" id="startButton">START</button>
 
     <!-- Main Container -->
     <div class="container">
-        <!-- Enter Bus Number Screen -->
+        <!-- Enter Bus Number Screen - User speaks bus number -->
         <div class="screen" id="enterBusScreen">
-            <div class="text-display">እባክዎ የአውቶብስ ቁጥር ያስገቡ</div>
+            <div class="text-display">Please enter bus number</div>
             <div id="recordingIndicator" style="display: none;">
                 <span class="status-indicator recording"></span>
-                <span>በመቅረጽ ላይ...</span>
+                <span>Recording...</span>
             </div>
         </div>
 
-        <!-- Request Sent Screen -->
+        <!-- Request Sent Screen - Confirmation after sending request -->
         <div class="screen" id="requestSentScreen">
-            <div class="text-display">ጥያቀዎ ተልኳል</div>
+            <div class="text-display">Request sent</div>
         </div>
 
-        <!-- Waiting Screen -->
+        <!-- Waiting Screen - Shows bus arrival time and status -->
         <div class="screen" id="waitingScreen">
-            <div class="text-display" id="waitingText">ተሳፋሪ በመጠበቅ ላይ</div>
+            <div class="text-display" id="waitingText">Waiting for bus</div>
             <div class="time-display" id="timeDisplay"></div>
             <div class="station-info" id="stationInfo"></div>
         </div>
     </div>
 
     <script>
-        const audioBaseUrl = 'https://robel494.github.io/bus/';
-        let recognition;
-        let bluetoothRSSI = -100;
-        let distance = 0;
-        let timeLeft = 0;
-        let updateInterval = null;
-        let stationNumber = 3;
-        let bluetoothDevice = null;
-        let bluetoothServer = null;
-        let bluetoothCharacteristic = null;
-        let useBluetooth = false;
+        /**
+         * PASSENGER DEVICE - Bus Station App
+         * 
+         * This app allows blind passengers to:
+         * 1. Enter bus number via voice
+         * 2. Send request to driver
+         * 3. Connect to bus via Bluetooth Low Energy (BLE)
+         * 4. Track bus arrival time using RSSI signal strength
+         * 
+         * BLE Configuration:
+         * - Service UUID: 12345678-1234-1234-1234-123456789abc
+         * - Characteristic UUID: 12345678-1234-1234-1234-123456789abd
+         * - RSSI values: int8 (-100 to -30 dBm)
+         */
+
+        // ========== GLOBAL VARIABLES ==========
+        let recognition;                    // Voice recognition object
+        let bluetoothRSSI = -100;           // Current RSSI value from BLE device
+        let distance = 0;                   // Distance to bus in centimeters
+        let timeLeft = 0;                   // Time until bus arrives in seconds
+        let updateInterval = null;          // Interval for tracking updates
+        let stationNumber = 3;              // Station number where passenger is waiting
+        let bluetoothDevice = null;         // Connected BLE device
+        let bluetoothServer = null;         // GATT server connection
+        let bluetoothCharacteristic = null; // Characteristic for RSSI data
+        let useBluetooth = false;           // Whether real BLE is connected
         
-        // Bluetooth Service UUID for bus tracking (must match BLE advertiser)
+        // BLE Service and Characteristic UUIDs (must match BLE advertiser tool)
         const BUS_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
         const RSSI_CHARACTERISTIC_UUID = '12345678-1234-1234-1234-123456789abd';
 
-        // Initialize
+        // ========== INITIALIZATION ==========
         document.getElementById('startButton').addEventListener('click', startApp);
 
+        /**
+         * Start the application
+         * Shows the bus number input screen and starts voice recognition
+         */
         function startApp() {
             document.getElementById('startButton').style.display = 'none';
             document.getElementById('enterBusScreen').classList.add('active');
-            playAudio('enter.wav');
+            
+            // Start voice recognition after a short delay
             setTimeout(() => {
                 startVoiceRecognition();
             }, 1000);
         }
 
-        function playAudio(filename) {
-            const audio = new Audio(`${audioBaseUrl}${filename}`);
-            audio.play().catch(e => console.log('Audio play error:', e));
-        }
-
+        /**
+         * Start voice recognition to capture bus number
+         * Listens for 10 seconds or until user stops speaking
+         */
         function startVoiceRecognition() {
+            // Check if browser supports voice recognition
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                alert('Voice recognition not supported');
+                alert('Voice recognition not supported in this browser');
                 return;
             }
 
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.lang = 'am-ET';
+            recognition.lang = 'en-US'; // English language
             recognition.continuous = true; // Keep listening continuously
             recognition.interimResults = true; // Show interim results
 
@@ -189,13 +209,13 @@
                     if (recognition) {
                         recognition.stop();
                     }
-                }, 10000); // 10 seconds of recording
+                }, 10000);
             };
 
             recognition.onresult = (event) => {
                 let interimTranscript = '';
                 
-                // Process all results
+                // Process all recognition results
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
@@ -205,8 +225,8 @@
                     }
                 }
                 
-                console.log('Interim:', interimTranscript);
-                console.log('Final:', finalTranscript);
+                console.log('Interim transcript:', interimTranscript);
+                console.log('Final transcript:', finalTranscript);
             };
 
             recognition.onerror = (event) => {
@@ -236,6 +256,10 @@
             recognition.start();
         }
 
+        /**
+         * Handle the bus number input from voice recognition
+         * Sends request to driver and starts bus tracking
+         */
         function handleBusNumberInput(transcript) {
             // Stop recognition
             if (recognition) {
@@ -243,18 +267,18 @@
             }
             
             // Send request signal to driver (using localStorage for demo)
-            // In real app, this would be via WebSocket/Server
+            // In production, this would be via WebSocket/Server
             localStorage.setItem('busRequest', JSON.stringify({
                 station: stationNumber,
                 timestamp: Date.now(),
                 busNumber: transcript
             }));
             
-            // Simulate sending request
+            // Show request sent confirmation
             document.getElementById('enterBusScreen').classList.remove('active');
             document.getElementById('requestSentScreen').classList.add('active');
-            playAudio('sent.wav');
 
+            // After 2 seconds, start waiting screen and connect to bus
             setTimeout(() => {
                 document.getElementById('requestSentScreen').classList.remove('active');
                 document.getElementById('waitingScreen').classList.add('active');
@@ -263,6 +287,10 @@
             }, 2000);
         }
 
+        /**
+         * Connect to bus BLE device
+         * Uses Web Bluetooth API to connect to the BLE advertiser on the bus
+         */
         async function connectToBusBluetooth() {
             // Check if Web Bluetooth API is available
             if (!navigator.bluetooth) {
@@ -272,8 +300,7 @@
             }
 
             try {
-                // Request Bluetooth device - connect to BLE advertiser
-                // User will see a list of available BLE devices
+                // Request Bluetooth device - user will see a list of available BLE devices
                 bluetoothDevice = await navigator.bluetooth.requestDevice({
                     filters: [{ services: [BUS_SERVICE_UUID] }],
                     optionalServices: [BUS_SERVICE_UUID]
@@ -299,16 +326,15 @@
                 useBluetooth = true;
                 console.log('Bluetooth connected successfully');
                 
-                // Also read RSSI directly from device if available
+                // Try to read RSSI directly from device if available
                 if (bluetoothDevice.gatt.connected) {
                     readRSSI();
                 }
                 
-                // Handle disconnection
+                // Handle disconnection - try to reconnect
                 bluetoothDevice.addEventListener('gattserverdisconnected', () => {
                     console.log('Bluetooth disconnected');
                     useBluetooth = false;
-                    // Try to reconnect
                     setTimeout(connectToBusBluetooth, 5000);
                 });
                 
@@ -319,15 +345,15 @@
             }
         }
 
+        /**
+         * Read RSSI value directly from BLE characteristic
+         */
         async function readRSSI() {
-            // Try to read RSSI from the device
-            // Note: Some browsers/devices may not support this
             if (bluetoothDevice && bluetoothDevice.gatt.connected) {
                 try {
-                    // Read RSSI from characteristic value
                     const value = await bluetoothCharacteristic.readValue();
                     const dataView = new DataView(value.buffer);
-                    // Assume RSSI is sent as int8
+                    // RSSI is sent as int8 (signed byte)
                     bluetoothRSSI = dataView.getInt8(0);
                     calculateDistanceFromRSSI();
                 } catch (e) {
@@ -336,6 +362,9 @@
             }
         }
 
+        /**
+         * Handle RSSI updates from BLE characteristic notifications
+         */
         function handleBluetoothUpdate(event) {
             if (!useBluetooth) return;
             
@@ -356,31 +385,35 @@
             }
         }
 
+        /**
+         * Calculate distance from RSSI using path loss model
+         * Formula: distance = 10^((TxPower - RSSI) / (10 * N))
+         * Where:
+         * - TxPower = -59 dBm (typical reference power at 1 meter)
+         * - N = 2 (path loss exponent for free space)
+         */
         function calculateDistanceFromRSSI() {
-            // Convert RSSI to distance using path loss model
-            // RSSI formula: RSSI = TxPower - 10 * N * log10(distance)
-            // Rearranged: distance = 10^((TxPower - RSSI) / (10 * N))
+            const txPower = -59; // dBm at 1 meter reference distance
+            const pathLossExponent = 2; // Free space path loss
             
-            // For demo scale (small distances in cm):
-            // Assuming TxPower = -59 dBm (typical for 1m reference)
-            // Path loss exponent N = 2 (free space)
-            const txPower = -59; // dBm at 1 meter
-            const pathLossExponent = 2;
-            
-            // Calculate distance in meters first
+            // Calculate distance in meters
             const distanceMeters = Math.pow(10, (txPower - bluetoothRSSI) / (10 * pathLossExponent));
             
-            // Convert to cm for demo scale
+            // Convert to centimeters for demo scale
             distance = Math.max(0, distanceMeters * 100);
             
             // Clamp to reasonable range (0 to 10000 cm = 100m)
             distance = Math.min(10000, distance);
         }
 
+        /**
+         * Start bus tracking - updates distance and time every second
+         * If BLE is connected, uses real RSSI data
+         * Otherwise, simulates bus approaching for demo
+         */
         function startBusTracking() {
-            // If Bluetooth is connected, it will update via handleBluetoothUpdate
-            // Otherwise, simulate bus approaching for demo
-            let simulatedDistance = 5000; // Start at 5000cm (50m for demo scale)
+            // Simulation variables (used when BLE is not connected)
+            let simulatedDistance = 5000; // Start at 5000cm (50m)
             let simulatedRSSI = -100;
             
             updateInterval = setInterval(() => {
@@ -388,9 +421,7 @@
                     // Simulate bus approaching - decrease distance by 50cm per second
                     simulatedDistance = Math.max(0, simulatedDistance - 50);
                     
-                    // Convert simulated distance to RSSI
-                    // RSSI formula: RSSI = TxPower - 10 * N * log10(distance)
-                    // For demo: RSSI = -59 - 20 * log10(distance/100) where distance is in cm
+                    // Convert simulated distance to RSSI using path loss model
                     if (simulatedDistance > 0) {
                         const distanceMeters = simulatedDistance / 100;
                         simulatedRSSI = -59 - 20 * Math.log10(distanceMeters);
@@ -404,37 +435,40 @@
                     }
                 }
                 
-                // Calculate time left based on distance
+                // Calculate time left and update display
                 calculateTimeLeft();
                 updateDisplay();
             }, 1000); // Update every second
         }
 
+        /**
+         * Calculate time until bus arrives
+         * Assumes bus speed of 30 cm/second for demo scale
+         */
         function calculateTimeLeft() {
-            // For demo: assume bus speed of 30 cm/second for small scale demonstration
-            // In real app, this would be calculated based on actual bus speed
             const busSpeed = 30; // cm per second
             timeLeft = Math.max(0, distance / busSpeed); // Time in seconds
         }
 
-        let lastAudioPlayed = '';
+        // Track last displayed message to avoid repeated updates
         let lastMessageShown = '';
 
+        /**
+         * Update the display with current bus status and arrival time
+         */
         function updateDisplay() {
             const timeInMinutes = Math.floor(timeLeft / 60);
             const timeInSeconds = Math.floor(timeLeft % 60);
             
             if (timeLeft <= 0) {
-                // Bus arrived
-                const message = 'አውቶብሱ ደርሷል';
+                // Bus has arrived
+                const message = 'Bus has arrived';
                 if (lastMessageShown !== message) {
                     document.getElementById('waitingText').textContent = message;
                     document.getElementById('timeDisplay').textContent = '';
-                    playAudio('arrived.wav');
                     lastMessageShown = message;
-                    lastAudioPlayed = 'arrived.wav';
                     
-                    // Vibration
+                    // Vibration feedback
                     if (navigator.vibrate) {
                         navigator.vibrate([200, 100, 200, 100, 200]);
                     }
@@ -442,31 +476,26 @@
                     clearInterval(updateInterval);
                 }
             } else if (timeInMinutes >= 10) {
-                const message = 'አውቶብሱ ሊደርስ ከ10 ደቂቃ በላይ ቀርቶታል';
+                // More than 10 minutes remaining
+                const message = 'Bus arriving in more than 10 minutes';
                 if (lastMessageShown !== message) {
                     document.getElementById('waitingText').textContent = message;
-                    document.getElementById('timeDisplay').textContent = `${timeInMinutes} ደቂቃ`;
-                    playAudio('minabove.wav');
+                    document.getElementById('timeDisplay').textContent = `${timeInMinutes} minutes`;
                     lastMessageShown = message;
-                    lastAudioPlayed = 'minabove.wav';
                 }
             } else {
-                const message = 'አውቶብሱ ሊደርስ ከ10 ደቂቃ በታች ቀርቶታል';
+                // Less than 10 minutes remaining
+                const message = 'Bus arriving in less than 10 minutes';
                 if (lastMessageShown !== message) {
                     document.getElementById('waitingText').textContent = message;
-                    document.getElementById('timeDisplay').textContent = `${timeInMinutes} ደቂቃ ${timeInSeconds} ሰከንድ`;
-                    playAudio('minbelow.wav');
+                    document.getElementById('timeDisplay').textContent = `${timeInMinutes} min ${timeInSeconds} sec`;
                     lastMessageShown = message;
-                    lastAudioPlayed = 'minbelow.wav';
                 } else {
                     // Update time display even if message is same
-                    document.getElementById('timeDisplay').textContent = `${timeInMinutes} ደቂቃ ${timeInSeconds} ሰከንድ`;
+                    document.getElementById('timeDisplay').textContent = `${timeInMinutes} min ${timeInSeconds} sec`;
                 }
             }
         }
-
-        // Bus tracking is done via BLE RSSI connection
     </script>
 </body>
 </html>
-
