@@ -1,192 +1,180 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="am">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Smart Bus – Voice Passenger</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Bus – Passenger</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
 
 <style>
 body {
     margin: 0;
+    background: black;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+}
+#btn {
+    width: 100vw;
     height: 100vh;
-    background: #020617;
-    color: white;
-    font-family: Arial, Helvetica, sans-serif;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-}
-
-h1 {
-    font-size: 2rem;
-}
-
-button {
-    margin-top: 25px;
-    padding: 18px 28px;
-    font-size: 1.2rem;
-    border: none;
-    border-radius: 12px;
-    background: #22c55e;
+    font-size: 3rem;
+    font-weight: bold;
+    background: yellow;
     color: black;
+    border: none;
 }
-
 #status {
-    margin-top: 25px;
-    font-size: 1.1rem;
-    color: #ccc;
+    position: absolute;
+    bottom: 15px;
+    width: 100%;
     text-align: center;
+    color: #aaa;
+    font-size: 1.1rem;
 }
 </style>
 </head>
 
 <body>
 
-<h1>Smart Bus</h1>
-
-<button onclick="startVoice()">🎤 Speak Bus Number</button>
-
-<div id="status">Tap the button and speak</div>
+<button id="btn">ጀምር</button>
+<div id="status">በመገናኘት ላይ…</div>
 
 <script>
-const statusEl = document.getElementById("status");
+/* ================= CONFIG ================= */
+const STATION_NUMBER = 3;
+const DEMO_MODE = true;      // For indoor demo
+const DEMO_SCALE = 0.02;     // Shrinks distance for demo
+const AUDIO_BASE = "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO_NAME/";
+/* ========================================== */
 
-/* ==============================
-   SPEECH SETUP
-================================ */
+const btn = document.getElementById("btn");
+const status = document.getElementById("status");
+
+function playAudio(file) {
+    const audio = new Audio(AUDIO_BASE + file);
+    audio.play();
+}
+
+/* Speech Recognition */
 const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
-
 const recognition = new SpeechRecognition();
 recognition.lang = "en-US";
 recognition.continuous = false;
-recognition.interimResults = false;
 
-/* ==============================
-   MQTT
-================================ */
+let userCoords = null;
+let arrived = false;
+
+/* MQTT */
 const client = new Paho.MQTT.Client(
     "broker.hivemq.com",
     8884,
-    "blind_user_" + Math.random().toString(16).substr(2, 8)
+    "user_" + Math.random()
 );
 
 client.connect({
     useSSL: true,
     onSuccess: () => {
-        speak("Connected. Please say your bus number.");
-        statusEl.innerText = "Connected";
-        getUserLocation();
+        status.innerText =
+            "ተገናኝቷል | አውቶቡስ በመቅረብ ላይ…" +
+            (DEMO_MODE ? " (Demo)" : "");
         client.subscribe("smart_bus_project/bus_location");
     }
 });
 
-/* ==============================
-   START VOICE
-================================ */
-function startVoice() {
-    speak("Listening. Please say your bus number.");
-    recognition.start();
-}
-
-/* ==============================
-   SPEECH → TEXT
-================================ */
-recognition.onresult = event => {
-    const text = event.results[0][0].transcript;
-    statusEl.innerText = "Heard: " + text;
-
-    speak("Bus " + text + ". Alerting the driver.");
-    sendAlert(text);
-};
-
-recognition.onerror = () => {
-    speak("Sorry. I did not understand. Please try again.");
-};
-
-/* ==============================
-   SEND ALERT
-================================ */
-function sendAlert(bus) {
-    const msg = new Paho.MQTT.Message(bus);
-    msg.destinationName = "smart_bus_project/driver_alerts";
-    client.send(msg);
-}
-
-/* ==============================
-   TEXT → SPEECH
-================================ */
-function speak(text) {
-    speechSynthesis.cancel();
-    speechSynthesis.speak(
-        new SpeechSynthesisUtterance(text)
-    );
-}
-
-/* ==============================
-   USER GPS
-================================ */
-let userLoc = null;
-let busLoc = null;
-
-function getUserLocation() {
-    if (!navigator.geolocation) return;
-
-    navigator.geolocation.getCurrentPosition(pos => {
-        userLoc = {
+/* GPS */
+navigator.geolocation.watchPosition(
+    pos => {
+        userCoords = {
             lat: pos.coords.latitude,
             lon: pos.coords.longitude
         };
-    });
-}
+    },
+    () => {
+        status.innerText = "እባክዎ GPS ፍቃድ ይስጡ";
+    },
+    { enableHighAccuracy: true }
+);
 
-/* ==============================
-   BUS GPS & PROXIMITY
-================================ */
-client.onMessageArrived = msg => {
-    try {
-        busLoc = JSON.parse(msg.payloadString);
-        checkDistance();
-    } catch {}
-};
-
-function checkDistance() {
-    if (!userLoc || !busLoc) return;
-
-    const d = distance(
-        userLoc.lat,
-        userLoc.lon,
-        busLoc.lat,
-        busLoc.lon
-    );
-
-    if (d < 0.2) {
-        speak("Your bus is arriving now.");
-    } else if (d < 0.5) {
-        speak("Your bus is very close.");
-    }
-}
-
-/* ==============================
-   DISTANCE
-================================ */
-function distance(lat1, lon1, lat2, lon2) {
+/* Distance calculation */
+function calcDistance(lat1, lon1, lat2, lon2) {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-
     const a =
         Math.sin(dLat / 2) ** 2 +
         Math.cos(lat1 * Math.PI / 180) *
         Math.cos(lat2 * Math.PI / 180) *
         Math.sin(dLon / 2) ** 2;
-
-    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-</script>
 
+/* Receive bus location */
+client.onMessageArrived = msg => {
+    if (!userCoords || arrived) return;
+
+    const bus = JSON.parse(msg.payloadString);
+    let distance = calcDistance(
+        userCoords.lat,
+        userCoords.lon,
+        bus.lat,
+        bus.lon
+    );
+
+    if (DEMO_MODE) distance *= DEMO_SCALE;
+
+    const eta = Math.max(1, Math.round((distance / 0.5) * 2));
+
+    if (distance <= 0.02) {
+        arrived = true;
+        btn.innerText = "አውቶቡስ ደርሷል";
+        btn.style.background = "#00ff00";
+        playAudio("arrived.wav");
+        navigator.vibrate?.([700, 400, 700]);
+        status.innerText = "አውቶቡስ ወደ ጣቢያው ደርሷል";
+    } else {
+        btn.innerText = eta + " ደቂቃ ቀርቷል";
+        status.innerText = "አውቶቡስ በመቅረብ ላይ…";
+    }
+};
+
+/* Button click */
+btn.onclick = () => {
+    playAudio("listen.wav");
+    btn.innerText = "በመስማት ላይ…";
+    btn.style.background = "red";
+    setTimeout(() => recognition.start(), 600);
+};
+
+/* Voice recognition */
+recognition.onresult = e => {
+    const transcript = e.results[0][0].transcript.trim();
+    if (!transcript) {
+        // Restart listening if nothing spoken
+        btn.innerText = "በመስማት ላይ…";
+        recognition.start();
+        return;
+    }
+
+    const busNumber = transcript;
+    arrived = false;
+
+    const payload = {
+        bus: busNumber,
+        station: STATION_NUMBER,
+        type: "disabled"
+    };
+    const msg = new Paho.MQTT.Message(JSON.stringify(payload));
+    msg.destinationName = "smart_bus_project/driver_alerts";
+    client.send(msg);
+
+    playAudio("sent.wav");
+
+    btn.innerText = "ጥያቄ ተልኳል";
+    btn.style.background = "black";
+    btn.style.color = "yellow";
+    status.innerText = "አውቶቡስ በመቅረብ ላይ…";
+};
+</script>
 </body>
 </html>
