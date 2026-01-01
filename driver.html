@@ -94,17 +94,14 @@
 </head>
 <body>
     <div class="container">
-        <!-- Status Display - Shows current state -->
         <div class="status-display" id="statusDisplay">
             <div>Waiting for passengers</div>
         </div>
 
-        <!-- GPS Info - Shows current bus location -->
         <div class="gps-info" id="gpsInfo">
-            GPS: Getting location...
+            GPS: Initializing...
         </div>
 
-        <!-- Recording Indicator - Shows when microphone is active -->
         <div class="recording-indicator" id="recordingIndicator" style="display: none;">
             <span class="status-indicator active"></span>
             <span>Listening...</span>
@@ -112,127 +109,109 @@
     </div>
 
     <script>
-        /**
-         * DRIVER DEVICE - Bus Station App
-         * 
-         * This app allows bus drivers to:
-         * 1. Receive passenger requests
-         * 2. Track bus location using GPS
-         * 3. Broadcast GPS location to passengers
-         * 4. Listen for voice input from driver
-         */
-
         // ========== GLOBAL VARIABLES ==========
-        let recognition;                    // Voice recognition object
-        let hasReceivedRequest = false;    // Whether a passenger request was received
-        let requestCheckInterval = null;   // Interval for checking passenger requests
-        let currentLocation = null;        // Current bus GPS location
-        let locationWatchId = null;        // GPS watch position ID
-        let locationBroadcastInterval = null; // Interval for broadcasting location
-        const stationNumber = 3;           // Station number
+        let recognition;
+        let hasReceivedRequest = false;
+        let requestCheckInterval = null;
+        let busLocation = { lat: 2000, lon: 0 }; // Start 2000 cm (20m) away
+        let locationBroadcastInterval = null;
+        let stationNumber = 3;
+        const busSpeed = 5; // cm per second
+
+        // ========== TEXT TO SPEECH ==========
+        function speak(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.9;
+            window.speechSynthesis.speak(utterance);
+        }
 
         // ========== INITIALIZATION ==========
         init();
 
-        /**
-         * Initialize the driver app
-         * Starts GPS tracking and checking for passenger requests
-         */
         function init() {
-            startLocationTracking();
+            // Speak initial status
+            setTimeout(() => {
+                speak('Waiting for passengers');
+            }, 500);
+
+            // Initialize bus location (for demo, starts far away)
+            updateBusLocation();
+
+            // Start checking for passenger requests
             checkForPassengerRequest();
+
+            // Start broadcasting location
+            startLocationBroadcast();
         }
 
-        /**
-         * Start GPS location tracking for bus
-         */
-        function startLocationTracking() {
-            if (navigator.geolocation) {
-                locationWatchId = navigator.geolocation.watchPosition(
-                    (position) => {
-                        currentLocation = {
-                            lat: position.coords.latitude,
-                            lon: position.coords.longitude,
-                            accuracy: position.coords.accuracy,
-                            timestamp: Date.now()
-                        };
-                        updateGPSDisplay();
-                        // Broadcast location to passengers
-                        broadcastLocation();
-                    },
-                    (error) => {
-                        console.error('Geolocation error:', error);
-                        document.getElementById('gpsInfo').textContent = 'GPS: Error getting location';
-                    },
-                    { enableHighAccuracy: true, maximumAge: 1000 }
-                );
-            } else {
-                document.getElementById('gpsInfo').textContent = 'GPS: Not supported';
-            }
-        }
-
-        /**
-         * Update GPS display with current location
-         */
-        function updateGPSDisplay() {
-            if (currentLocation) {
-                document.getElementById('gpsInfo').textContent = 
-                    `GPS: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lon.toFixed(6)}`;
-            }
-        }
-
-        /**
-         * Broadcast bus location to passengers
-         * In production, this would be via WebSocket/Server
-         * For demo, uses localStorage
-         */
-        function broadcastLocation() {
-            if (currentLocation && hasReceivedRequest) {
-                // Store location data for passenger to read
-                localStorage.setItem('busLocation', JSON.stringify({
-                    lat: currentLocation.lat,
-                    lon: currentLocation.lon,
-                    timestamp: currentLocation.timestamp
-                }));
-            }
-        }
-
-        /**
-         * Check for passenger requests via localStorage
-         * In production, this would be via WebSocket/Server push notification
-         */
+        // ========== CHECK FOR PASSENGER REQUEST ==========
         function checkForPassengerRequest() {
             requestCheckInterval = setInterval(() => {
+                // Check for voice signal from user (when user speaks into microphone)
+                const voiceSignal = localStorage.getItem('userVoiceSignal');
+                if (voiceSignal && !hasReceivedRequest) {
+                    try {
+                        const signal = JSON.parse(voiceSignal);
+                        if (signal.hasInput && Date.now() - signal.timestamp < 10000) {
+                            handlePassengerRequest({ station: stationNumber });
+                            localStorage.removeItem('userVoiceSignal');
+                        }
+                    } catch (e) {
+                        console.error('Error parsing voice signal:', e);
+                    }
+                }
+                
+                // Also check for formal bus request
                 const requestData = localStorage.getItem('busRequest');
                 if (requestData && !hasReceivedRequest) {
                     try {
                         const request = JSON.parse(requestData);
-                        // Check if request is for this station
                         if (request.station === stationNumber) {
                             handlePassengerRequest(request);
-                            // Clear the request after processing
                             localStorage.removeItem('busRequest');
                         }
                     } catch (e) {
                         console.error('Error parsing request:', e);
                     }
                 }
-            }, 500); // Check every 500ms
+            }, 500);
         }
 
-        /**
-         * Start voice recognition for driver input
-         * Driver can speak to acknowledge or respond
-         */
+        // ========== HANDLE PASSENGER REQUEST ==========
+        function handlePassengerRequest(request) {
+            hasReceivedRequest = true;
+            clearInterval(requestCheckInterval);
+
+            // Update display
+            const statusDisplay = document.getElementById('statusDisplay');
+            const message = `Disabled passenger waiting at station ${stationNumber}`;
+            statusDisplay.innerHTML = `<div class="alert-status">${message}</div>`;
+
+            // Speak the message
+            speak(message);
+
+            // Start listening for voice input (this simulates receiving signal from user phone)
+            startVoiceRecognition();
+
+            // Clear the request
+            localStorage.removeItem('busRequest');
+        }
+
+        // ========== VOICE RECOGNITION ==========
         function startVoiceRecognition() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.log('Voice recognition not supported');
+                // Simulate request received after delay for demo
+                setTimeout(() => {
+                    handlePassengerRequest({ station: stationNumber });
+                }, 1000);
                 return;
             }
 
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.lang = 'en-US'; // English language
+            recognition.lang = 'en-US';
             recognition.continuous = true;
             recognition.interimResults = false;
 
@@ -241,45 +220,25 @@
             };
 
             recognition.onresult = (event) => {
-                // Process all recognition results
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
-                    console.log('Voice input received:', transcript);
-                    
-                    // Any voice input from driver
-                    if (transcript.trim().length > 0) {
-                        console.log('Driver voice input:', transcript);
-                        // Could add driver response handling here
-                    }
+                // Any voice input received means signal from user phone
+                if (event.results.length > 0) {
+                    const transcript = event.results[event.results.length - 1][0].transcript;
+                    console.log('Signal received:', transcript);
+                    // Signal received - passenger request is active
                 }
             };
 
             recognition.onerror = (event) => {
                 console.error('Recognition error:', event.error);
-                if (event.error === 'no-speech') {
-                    // Restart recognition silently
-                    setTimeout(() => {
-                        if (recognition && hasReceivedRequest) {
-                            try {
-                                recognition.start();
-                            } catch (e) {
-                                console.log('Recognition already started');
-                            }
-                        }
-                    }, 1000);
-                }
             };
 
             recognition.onend = () => {
-                // Restart recognition only if request was received
                 if (hasReceivedRequest) {
                     setTimeout(() => {
-                        if (recognition) {
-                            try {
-                                recognition.start();
-                            } catch (e) {
-                                console.log('Recognition restart error');
-                            }
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.log('Recognition restart error');
                         }
                     }, 100);
                 }
@@ -294,32 +253,58 @@
             }
         }
 
-        /**
-         * Handle passenger request
-         * Shows alert and starts broadcasting GPS location
-         */
-        function handlePassengerRequest(request) {
-            hasReceivedRequest = true;
-            
-            // Stop checking for requests
-            if (requestCheckInterval) {
-                clearInterval(requestCheckInterval);
-            }
-            
-            // Update status display with alert
-            const statusDisplay = document.getElementById('statusDisplay');
-            statusDisplay.innerHTML = `<div class="alert-status">Disabled passenger waiting at station ${stationNumber}</div>`;
-            
-            // Start broadcasting location more frequently
-            if (locationBroadcastInterval) {
-                clearInterval(locationBroadcastInterval);
-            }
+        // ========== UPDATE BUS LOCATION ==========
+        function updateBusLocation() {
+            // For demo: simulate bus approaching the station
+            // Bus starts at 2000 cm (20m) and moves closer
+            const locationUpdateInterval = setInterval(() => {
+                if (hasReceivedRequest) {
+                    // Move bus closer to station (simulate movement)
+                    busLocation.lat = Math.max(0, busLocation.lat - busSpeed);
+                } else {
+                    // Reset bus position when no request
+                    busLocation.lat = 2000;
+                }
+            }, 1000);
+        }
+
+        // ========== START LOCATION BROADCAST ==========
+        function startLocationBroadcast() {
             locationBroadcastInterval = setInterval(() => {
-                broadcastLocation();
+                if (hasReceivedRequest) {
+                    const distance = Math.sqrt(busLocation.lat * busLocation.lat + busLocation.lon * busLocation.lon);
+
+                    if (distance > 2000) {
+                        // Distance > 20m (2000 cm) - send GPS location
+                        localStorage.setItem('busLocation', JSON.stringify({
+                            lat: busLocation.lat,
+                            lon: busLocation.lon,
+                            timestamp: Date.now()
+                        }));
+                        document.getElementById('gpsInfo').textContent = 
+                            `GPS: ${busLocation.lat.toFixed(0)} cm from station`;
+                    } else {
+                        // Distance < 20m - send RSSI (simulate Bluetooth signal strength)
+                        // RSSI ranges from -100 (far) to 0 (close)
+                        // Convert distance to RSSI: closer = higher (less negative) RSSI
+                        const rssi = Math.max(-100, -60 - (distance / 10));
+                        
+                        localStorage.setItem('busRSSI', JSON.stringify({
+                            rssi: rssi,
+                            timestamp: Date.now()
+                        }));
+                        localStorage.setItem('busLocation', JSON.stringify({
+                            lat: busLocation.lat,
+                            lon: busLocation.lon,
+                            timestamp: Date.now()
+                        }));
+                        document.getElementById('gpsInfo').textContent = 
+                            `RSSI: ${rssi.toFixed(0)} dBm (${distance.toFixed(0)} cm)`;
+                    }
+                } else {
+                    document.getElementById('gpsInfo').textContent = 'GPS: Waiting for passenger request';
+                }
             }, 1000); // Broadcast every second
-            
-            // Start voice recognition for driver input (optional)
-            startVoiceRecognition();
         }
     </script>
 </body>
