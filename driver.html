@@ -1,145 +1,86 @@
 <!DOCTYPE html>
 <html lang="am">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Bus – Passenger</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-
-<style>
-body{margin:0;background:black;font-family:Arial}
-#btn{
-width:100vw;height:100vh;font-size:3rem;
-background:yellow;color:black;border:none}
-#status{
-position:absolute;bottom:15px;width:100%;
-text-align:center;color:#aaa;font-size:1.1rem}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Bus – Driver</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        body { margin: 0; background: #001a33; font-family: Arial, sans-serif; color: white; text-align: center; }
+        #header { padding: 20px; background: #003366; font-size: 1.5rem; font-weight: bold; border-bottom: 3px solid yellow; }
+        #alert-display { height: 60vh; display: flex; align-items: center; justify-content: center; font-size: 3rem; font-weight: bold; padding: 20px; }
+        #status { font-size: 1rem; color: #00ff00; margin-top: 10px; }
+        .active-alert { background: red; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
 </head>
-
 <body>
-<button id="btn">ጀምር</button>
-<div id="status">ዝግጁ</div>
+
+<div id="header">የአውቶቡስ አሽከርካሪ መቆጣጠሪያ</div>
+<div id="alert-display">ዝግጁ...</div>
+<div id="status">MQTT በመገናኘት ላይ...</div>
 
 <script>
-/* CONFIG */
-const AUDIO_BASE="https://robel494.github.io/bus/";
-const DEMO_SCALE=0.01; // cm demo
-const BT_THRESHOLD_CM=1500; // 15m
-const SPEED_MPS=0.6;
+/* ================= CONFIG ================= */
+const AUDIO_BASE = "https://robel494.github.io/bus/";
+const BUS_ID = "BUS_001"; // Unique ID for this bus
+/* ========================================== */
 
-/* ELEMENTS */
-const btn=document.getElementById("btn");
-const status=document.getElementById("status");
+const alertDisplay = document.getElementById("alert-display");
+const status = document.getElementById("status");
 
-/* AUDIO */
-const play=f=>new Audio(AUDIO_BASE+f).play();
+// Audio setup
+const sounds = {
+    alert: new Audio(AUDIO_BASE + "Alert.wav"),
+    pickup: new Audio(AUDIO_BASE + "Pickup.wav"),
+    destination: new Audio(AUDIO_BASE + "Destination.wav")
+};
 
-/* SPEECH */
-const SR=window.SpeechRecognition||webkitSpeechRecognition;
-const rec=new SR();
-rec.lang="en-US";
-rec.continuous=false;
-
-/* STATE */
-let user=null,bus=null,requested=false,arrived=false,destination=null;
-
-/* MQTT */
-const client=new Paho.MQTT.Client(
-"broker.hivemq.com",8884,"user"+Math.random()
-);
+/* --- MQTT: Receiving Alerts from Passengers --- */
+const client = new Paho.MQTT.Client("broker.hivemq.com", 8884, "driver_" + Math.random());
 
 client.connect({
-useSSL:true,
-onSuccess(){
-status.innerText="ተገናኝቷል";
-client.subscribe("bus/location");
-client.subscribe("bus/near");
-}
+    useSSL: true,
+    onSuccess: () => {
+        status.innerText = "ተገናኝቷል | ምልክት በመጠባበቅ ላይ...";
+        client.subscribe("smart_bus_project/driver_alerts");
+    },
+    onFailure: () => { status.innerText = "ግንኙነት አልተሳካም"; }
 });
 
-/* GPS */
-navigator.geolocation.watchPosition(p=>{
-user={lat:p.coords.latitude,lon:p.coords.longitude};
-},{},{enableHighAccuracy:true});
-
-/* DISTANCE */
-function dist(a,b){
-const R=6371000;
-const dLat=(b.lat-a.lat)*Math.PI/180;
-const dLon=(b.lon-a.lon)*Math.PI/180;
-return R*2*Math.asin(Math.sqrt(
-Math.sin(dLat/2)**2+
-Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*
-Math.sin(dLon/2)**2
-));
-}
-
-/* RECEIVE BUS */
-client.onMessageArrived=m=>{
-const d=JSON.parse(m.payloadString);
-if(m.destinationName==="bus/location"){
-bus=d;
-if(!requested||arrived||!user) return;
-
-let dM=dist(user,bus)*DEMO_SCALE;
-let dCM=Math.round(dM*100);
-
-if(dCM<=BT_THRESHOLD_CM){
-status.innerText=`Bluetooth ≈ ${dCM} ሴ.ሜ`;
-btn.innerText=`${Math.max(1,Math.round(dCM/50))} ሰከንድ`;
-}
-
-let eta=Math.max(1,Math.round(dM/SPEED_MPS));
-btn.innerText=eta+" ሰከንድ";
-
-if(dCM<=30){
-arrived=true;
-btn.innerText="አውቶቡስ ደርሷል";
-btn.style.background="lime";
-play("arrived.wav");
-navigator.vibrate([800,400,800]);
-}
-}
-
-if(m.destinationName==="bus/near" && destination){
-play("unboard.wav");
-navigator.vibrate([1000,500,1000]);
-status.innerText="መውረድ ይዘጋጁ";
-}
+client.onMessageArrived = (msg) => {
+    const data = JSON.parse(msg.payloadString);
+    
+    // Only respond if the message is for this bus or general
+    handleIncomingAlert(data.type);
 };
 
-/* BUTTON */
-btn.onclick=()=>{
-if(!requested){
-play("listen.wav");
-btn.innerText="በመስማት ላይ…";
-btn.style.background="red";
-setTimeout(()=>rec.start(),800);
+function handleIncomingAlert(type) {
+    sounds.alert.play();
+    document.body.classList.add("active-alert");
+    
+    if (type === "pickup") {
+        alertDisplay.innerText = "ተሳፋሪ አለ! (Pickup)";
+        sounds.pickup.play();
+    } else if (type === "destination") {
+        alertDisplay.innerText = "መድረሻ (Destination)";
+        sounds.destination.play();
+    }
+
+    // Reset screen after 5 seconds
+    setTimeout(() => {
+        document.body.classList.remove("active-alert");
+        alertDisplay.innerText = "ዝግጁ...";
+    }, 5000);
 }
-};
 
-/* VOICE RESULT */
-rec.onresult=e=>{
-const text=e.results[0][0].transcript.trim();
-if(!text)return;
-requested=true;
-play("sent.wav");
-btn.style.background="black";
-btn.style.color="yellow";
-btn.innerText="ጥያቄ ተልኳል";
-
-client.send(new Paho.MQTT.Message(JSON.stringify({
-bus:text,type:"blind"
-})).destinationName="bus/request");
-};
-
-/* DESTINATION */
-setTimeout(()=>{
-destination=prompt("መድረሻ ያስገቡ");
-if(destination) play("destination.wav");
-},15000);
+/* --- Bluetooth: Advertising (Experimental) --- */
+/* Note: Mobile browsers currently have limited support for 
+   acting as a BLE Peripheral (Broadcaster) via Web Bluetooth. 
+   To make the Passenger app "Arrive" at 5cm, the Driver phone 
+   is best used with a BLE Broadcaster app (like 'nRF Connect') 
+   running in the background to send a constant signal.
+*/
 </script>
 </body>
 </html>
-
