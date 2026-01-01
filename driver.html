@@ -1,40 +1,121 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="am">
 <head>
-    <meta charset="UTF-8">
-    <title>Smart Bus - Driver</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
-    <style>
-        body { margin:0; background:#111; color:white; font-family:sans-serif; text-align:center; transition:0.3s; }
-        #box { margin-top:35vh; }
-        h1 { font-size:3rem; }
-    </style>
-</head>
-<body>
-    <div id="box">
-        <h1 id="msg">DRIVER ACTIVE</h1>
-        <p id="sub">Broadcasting Location...</p>
-    </div>
-    <script>
-        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "d_" + Math.random());
-        client.connect({useSSL: true, onSuccess: () => {
-            client.subscribe("smart_bus_project/driver_alerts");
-            navigator.geolocation.watchPosition(pos => {
-                const data = JSON.stringify({lat: pos.coords.latitude, lon: pos.coords.longitude});
-                client.send("smart_bus_project/bus_location", data);
-            }, null, {enableHighAccuracy:true});
-        }});
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Bus – Driver</title>
 
-        client.onMessageArrived = (m) => {
-            document.body.style.background = "red";
-            document.getElementById('msg').innerText = "PASSENGER!";
-            document.getElementById('sub').innerText = "Bus Requested: " + m.payloadString;
-            window.speechSynthesis.speak(new SpeechSynthesisUtterance("Passenger request for bus " + m.payloadString));
-            setTimeout(() => { 
-                document.body.style.background = "#111"; 
-                document.getElementById('msg').innerText = "DRIVER ACTIVE";
-            }, 10000);
-        };
-    </script>
+<style>
+body {
+    margin: 0;
+    background: black;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+
+#main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+#message {
+    font-size: 2.2rem;
+    margin-bottom: 30px;
+}
+
+#debug {
+    font-size: 1rem;
+    color: #00ff00;
+    font-family: monospace;
+}
+button {
+    font-size: 2rem;
+    padding: 20px 40px;
+    border: none;
+    background: yellow;
+    color: black;
+}
+</style>
+</head>
+
+<body>
+<div id="main">
+    <div id="message">ተሳፋሪዎችን በመጠበቅ ላይ...</div>
+    <button id="startBtn">ጀምር</button>
+    <div id="debug"></div>
+</div>
+
+<script>
+/* ================= CONFIG ================= */
+const AUDIO_BASE = "https://robel494.github.io/bus/";
+const NEAR_RSSI = -40;   // VERY close (touching / <20cm)
+/* ========================================= */
+
+const message = document.getElementById("message");
+const debug = document.getElementById("debug");
+const startBtn = document.getElementById("startBtn");
+
+/* --- Audio --- */
+const sounds = {
+    alert: new Audio(AUDIO_BASE + "Alert.wav"),
+    pickup: new Audio(AUDIO_BASE + "Pickup.wav")
+};
+
+function play(sound) {
+    sounds[sound].currentTime = 0;
+    sounds[sound].play().catch(()=>{});
+}
+
+/* --- State --- */
+let passengerDetected = false;
+let pickupPlayed = false;
+
+/* --- Bluetooth --- */
+async function startBluetooth() {
+    try {
+        const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true
+        });
+
+        await device.watchAdvertisements();
+
+        device.addEventListener("advertisementreceived", event => {
+            const rssi = event.rssi;
+
+            debug.innerText = `RSSI: ${rssi}`;
+
+            // First time passenger detected
+            if (!passengerDetected) {
+                passengerDetected = true;
+                message.innerText =
+                  "አንድ ዓይነ ስውር ተሳፋሪ በጣቢያ 3 እየጠበቀ ነው";
+                play("alert");
+                navigator.vibrate?.(500);
+            }
+
+            // VERY NEAR → PICKUP
+            if (rssi >= NEAR_RSSI && !pickupPlayed) {
+                pickupPlayed = true;
+                message.innerText = "ተሳፋሪው ተቀብሏል";
+                play("pickup");
+                navigator.vibrate?.([300,200,300]);
+            }
+        });
+
+    } catch (e) {
+        message.innerText = "ብሉቱዝ አልተገናኘም";
+        console.error(e);
+    }
+}
+
+startBtn.onclick = () => {
+    startBtn.style.display = "none";
+    startBluetooth();
+};
+</script>
 </body>
 </html>
