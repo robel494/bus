@@ -3,201 +3,165 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Passenger - Final</title>
+    <title>Smart Bus - Hybrid System</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        body { margin: 0; background: black; color: yellow; font-family: sans-serif; overflow: hidden; text-align: center; }
-        
-        /* BIG BUTTON STYLES */
-        #main-btn { width: 100vw; height: 80vh; font-size: 2.5rem; font-weight: bold; background: yellow; color: black; border: none; cursor: pointer; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        
-        /* INFO DASHBOARD (dBm, CMS) */
-        #dashboard { height: 20vh; background: #222; display: flex; justify-content: space-around; align-items: center; border-top: 2px solid #444; }
-        .stat-box { font-size: 1.2rem; color: #fff; }
-        .stat-val { font-size: 1.8rem; font-weight: bold; color: #00ff00; display: block; }
-        
-        /* DESTINATION MENU (Hidden by default) */
-        #dest-menu { display: none; position: absolute; top: 0; width: 100%; height: 100%; background: black; z-index: 10; padding-top: 50px; }
-        .dest-btn { width: 90%; padding: 20px; margin: 10px; font-size: 1.5rem; background: #333; color: white; border: 1px solid white; }
+        body { margin: 0; background: black; color: yellow; font-family: sans-serif; text-align: center; overflow: hidden; }
+        #main-btn { width: 100vw; height: 75vh; font-size: 2.5rem; font-weight: bold; background: yellow; border: none; transition: 0.3s; }
+        #dashboard { height: 25vh; background: #1a1a1a; display: flex; justify-content: space-around; align-items: center; border-top: 2px solid #333; }
+        .stat { color: #aaa; font-size: 0.9rem; }
+        .val { display: block; font-size: 1.6rem; color: #00ff00; font-weight: bold; }
+        #dest-overlay { display: none; position: fixed; top:0; width:100%; height:100%; background:black; padding-top:20px; z-index:100; }
+        .dest-opt { width: 90%; padding: 20px; margin: 10px; font-size: 1.2rem; background: #222; color: yellow; border: 1px solid yellow; }
     </style>
 </head>
 <body>
 
-    <button id="main-btn" onclick="startListening()">
-        <div>TAP TO START</div>
-        <div style="font-size: 1rem; margin-top: 10px; opacity: 0.7;">Say Bus Number</div>
-    </button>
+    <button id="main-btn" onclick="startSystem()">TAP TO START<br><small>(Voice & Bluetooth)</small></button>
 
     <div id="dashboard">
-        <div class="stat-box">SIGNAL<span class="stat-val" id="dbm-val">-- dBm</span></div>
-        <div class="stat-box">DIST<span class="stat-val" id="dist-val">-- cm</span></div>
-        <div class="stat-box">TIME<span class="stat-val" id="time-val">-- sec</span></div>
+        <div class="stat">MODE<span id="mode-val" class="val">GPS</span></div>
+        <div class="stat">DIST/RSSI<span id="dist-val" class="val">--</span></div>
+        <div class="stat">STATUS<span id="status-val" class="val">Standby</span></div>
     </div>
 
-    <div id="dest-menu">
-        <h2>Select Destination</h2>
-        <button class="dest-btn" onclick="setDestination('Stadium', 0.005)">Stadium (Near)</button>
-        <button class="dest-btn" onclick="setDestination('Bole', 0.010)">Bole (Far)</button>
+    <div id="dest-overlay">
+        <h3>Select Destination</h3>
+        <button class="dest-opt" onclick="setDest('Stadium', 0.0005)">Stadium (Near)</button>
+        <button class="dest-opt" onclick="setDest('Bole', 0.0020)">Bole (Far)</button>
     </div>
 
     <script>
-        // --- CONFIGURATION ---
-        const MQTT_BROKER = "broker.hivemq.com";
-        const MQTT_PORT = 8000;
-        const TOPIC_BUS = "smart_bus_project/bus_location";
-        const TOPIC_DRIVER = "smart_bus_project/driver_alerts";
-        
-        // --- STATE VARIABLES ---
-        let myLoc = null;      // Where the passenger is waiting
-        let destLoc = null;    // Where the passenger wants to go
-        let isOnBoard = false; // False = waiting, True = on bus
-        let busNumber = "";
-
-        // UI Elements
-        const btn = document.getElementById("main-btn");
-        const dbmEl = document.getElementById("dbm-val");
-        const distEl = document.getElementById("dist-val");
-        const timeEl = document.getElementById("time-val");
+        const btn = document.getElementById('main-btn');
+        const modeEl = document.getElementById('mode-val');
+        const distEl = document.getElementById('dist-val');
+        const statusEl = document.getElementById('status-val');
         const synth = window.speechSynthesis;
 
-        // 1. SETUP MQTT
-        const client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, "pass_" + Math.random());
-        
-        client.connect({ useSSL: true, onSuccess: () => {
-            console.log("Connected to Cloud");
-            client.subscribe(TOPIC_BUS);
-            speak("System Ready. Tap screen.");
-        }});
+        let myLoc = null;
+        let busDevice = null;
+        let isOnBoard = false;
+        let isBluetoothActive = false;
 
-        // 2. SETUP GPS (High Accuracy for Table Demo)
-        navigator.geolocation.watchPosition(pos => {
-            // Update "My Location" only if I am NOT on the bus yet
-            if (!isOnBoard && !myLoc) {
-                myLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-            }
-            
-            // If I am on the bus, my location IS the bus location (roughly)
-            if (isOnBoard) {
-                checkDestinationArrival(pos.coords.latitude, pos.coords.longitude);
-            }
-        }, err => console.log(err), { enableHighAccuracy: true });
+        // 1. MQTT Cloud Connection
+        const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, "p_" + Math.random());
+        client.connect({useSSL: true, onSuccess: () => { statusEl.innerText = "Cloud OK"; client.subscribe("smart_bus_project/bus_location"); }});
 
-        // 3. LISTEN FOR BUS MOVEMENT
-        client.onMessageArrived = msg => {
-            if (isOnBoard) return; // Stop tracking bus if we are already inside
-            if (!myLoc) return;    // Wait until we have our own GPS
-
-            const bus = JSON.parse(msg.payloadString);
-            
-            // Calculate Distance in Meters
-            const meters = calculateDistance(myLoc.lat, myLoc.lon, bus.lat, bus.lon);
-            const cm = Math.round(meters * 100); // Convert to cm for table demo
-            
-            // Simulate dBm (Signal Strength)
-            // Closer = Higher number (e.g. -30), Farther = Lower (e.g. -90)
-            const simulated_dbm = Math.round(-10 * Math.log10(meters || 1) - 40); 
-            
-            // Calculate Time (Assuming walking speed 1m/s for demo)
-            const seconds = Math.round(meters / 1.0); 
-
-            // Update Screen
-            dbmEl.innerText = simulated_dbm + " dBm";
-            distEl.innerText = cm + " cm";
-            timeEl.innerText = seconds + " s";
-
-            // LOGIC: BUS ARRIVED? (Within 300cm / 3 meters)
-            if (cm < 300) {
-                btn.style.background = "#00FF00"; // Green
-                btn.innerText = "BUS ARRIVED";
-                speak("Bus is here. Please board.");
-                
-                // Switch to Destination Mode after 5 seconds
-                setTimeout(() => {
-                    isOnBoard = true;
-                    document.getElementById("dest-menu").style.display = "block";
-                    speak("Select your destination.");
-                }, 5000);
-            } else {
-                btn.innerText = busNumber ? `BUS ${busNumber} COMING` : "TRACKING...";
-            }
-        };
-
-        // 4. MICROPHONE LOGIC
-        function startListening() {
-            if (isOnBoard) return; // Disable if already selecting destination
-
+        // 2. Start System (Voice + GPS)
+        function startSystem() {
+            speak("System active. Say bus number.");
             btn.style.background = "red";
             btn.innerText = "LISTENING...";
             
             const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.lang = 'en-US';
             recognition.start();
 
-            recognition.onresult = (event) => {
-                busNumber = event.results[0][0].transcript;
+            recognition.onresult = (e) => {
+                const busNum = e.results[0][0].transcript;
                 btn.style.background = "black";
                 btn.style.color = "yellow";
-                btn.innerHTML = `BUS ${busNumber}<br>CALLED`;
-                speak("Calling bus " + busNumber);
-
-                // Send Alert to Driver
-                const message = new Paho.MQTT.Message(busNumber);
-                message.destinationName = TOPIC_DRIVER;
-                client.send(message);
-            };
-
-            recognition.onerror = () => {
-                btn.style.background = "yellow";
-                btn.innerText = "TRY AGAIN";
+                btn.innerText = "BUS " + busNum + " CALLED";
+                speak("Calling bus " + busNum);
+                
+                // Send alert to driver
+                const msg = new Paho.MQTT.Message(busNum);
+                msg.destinationName = "smart_bus_project/driver_alerts";
+                client.send(msg);
             };
         }
 
-        // 5. DESTINATION LOGIC
-        function setDestination(name, offset) {
-            // Fake destination coordinates just slightly away from start
-            destLoc = { 
-                lat: myLoc.lat + offset, 
-                lon: myLoc.lon + offset,
-                name: name
-            };
-            document.getElementById("dest-menu").style.display = "none";
+        // 3. Hybrid Tracking Logic
+        navigator.geolocation.watchPosition(pos => {
+            if (!isOnBoard) myLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+            else checkDestination(pos.coords.latitude, pos.coords.longitude);
+        }, null, {enableHighAccuracy: true});
+
+        client.onMessageArrived = (msg) => {
+            if (isOnBoard) return;
+            const bus = JSON.parse(msg.payloadString);
+            const meters = calcDist(myLoc.lat, myLoc.lon, bus.lat, bus.lon);
+
+            // --- THE HYBRID SWITCH ---
+            if (meters > 15) {
+                // LONG RANGE: Use GPS
+                modeEl.innerText = "GPS";
+                distEl.innerText = meters.toFixed(0) + "m";
+                statusEl.innerText = "Approaching";
+            } else {
+                // SHORT RANGE: Trigger Bluetooth
+                modeEl.innerText = "BT-RSSI";
+                statusEl.innerText = "Searching...";
+                if (!isBluetoothActive) activateBluetooth();
+            }
+        };
+
+        async function activateBluetooth() {
+            isBluetoothActive = true;
+            speak("Bus nearby. Linking Bluetooth for arrival.");
+            try {
+                busDevice = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+                const abortController = new AbortController();
+                busDevice.watchAdvertisements({ signal: abortController.signal });
+                
+                busDevice.addEventListener('advertisementreceived', (event) => {
+                    let rssi = event.rssi;
+                    distEl.innerText = rssi + " dBm";
+                    
+                    // Trigger arrival when phones are basically touching (-35dBm)
+                    if (rssi > -35) {
+                        arrival();
+                        abortController.abort();
+                    }
+                });
+            } catch(e) { console.log("BT Error or Cancelled"); isBluetoothActive = false; }
+        }
+
+        function arrival() {
+            btn.style.background = "#00FF00";
+            btn.style.color = "black";
+            btn.innerText = "BUS ARRIVED";
+            speak("Bus is at the stop. Please board.");
+            if(navigator.vibrate) navigator.vibrate([500, 200, 500]);
+            
+            setTimeout(() => {
+                document.getElementById('dest-overlay').style.display = "block";
+                isOnBoard = true;
+            }, 4000);
+        }
+
+        // 4. Destination Logic
+        let targetLoc = null;
+        function setDest(name, offset) {
+            targetLoc = { lat: myLoc.lat + offset, lon: myLoc.lon + offset, name: name };
+            document.getElementById('dest-overlay').style.display = "none";
             btn.style.background = "blue";
             btn.style.color = "white";
-            btn.innerText = "NEXT STOP: " + name;
-            speak("Destination set to " + name);
+            btn.innerText = "GOING TO " + name.toUpperCase();
+            speak("Heading to " + name);
         }
 
-        function checkDestinationArrival(currentLat, currentLon) {
-            if (!destLoc) return;
-            
-            const distToDest = calculateDistance(currentLat, currentLon, destLoc.lat, destLoc.lon);
-            
-            // Update Dashboard for "Distance to Destination"
-            distEl.innerText = Math.round(distToDest * 1000) + " m";
-            timeEl.innerText = "--"; 
-
-            // If within 10 meters of destination target
-            if (distToDest < 0.01) { 
+        function checkDestination(lat, lon) {
+            if (!targetLoc) return;
+            const d = calcDist(lat, lon, targetLoc.lat, targetLoc.lon);
+            distEl.innerText = (d * 1000).toFixed(0) + "m";
+            if (d < 0.01) { // 10 meters
                 btn.style.background = "red";
-                btn.innerText = "GET OFF NOW";
-                if (navigator.vibrate) navigator.vibrate([1000, 500, 1000]);
-                speak("You have reached " + destLoc.name + ". Please exit.");
-                destLoc = null; // Stop checking
+                btn.innerText = "ARRIVED - GET OFF";
+                speak("You have reached " + targetLoc.name + ". Please exit safely.");
+                if(navigator.vibrate) navigator.vibrate([1000, 500, 1000]);
+                targetLoc = null;
             }
         }
 
-        // MATH HELPER
-        function speak(text) {
-            synth.speak(new SpeechSynthesisUtterance(text));
+        function calcDist(l1, o1, l2, o2) {
+            const R = 6371;
+            const dLat = (l2-l1)*Math.PI/180;
+            const dLon = (o2-o1)*Math.PI/180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(l1*Math.PI/180)*Math.cos(l2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1000; // Return Meters
         }
-
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371000; // Radius in meters
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        }
+        function speak(t) { synth.speak(new SpeechSynthesisUtterance(t)); }
     </script>
 </body>
 </html>
+
