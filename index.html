@@ -103,6 +103,15 @@
             color: #666;
             margin-top: 20px;
         }
+
+        .gps-info {
+            font-size: 18px;
+            color: #666;
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
     </style>
 </head>
 <body>
@@ -129,6 +138,7 @@
         <div class="screen" id="waitingScreen">
             <div class="text-display" id="waitingText">Waiting for bus</div>
             <div class="time-display" id="timeDisplay"></div>
+            <div class="gps-info" id="gpsInfo">GPS: Getting location...</div>
             <div class="station-info" id="stationInfo"></div>
         </div>
     </div>
@@ -140,30 +150,20 @@
          * This app allows blind passengers to:
          * 1. Enter bus number via voice
          * 2. Send request to driver
-         * 3. Connect to bus via Bluetooth Low Energy (BLE)
-         * 4. Track bus arrival time using RSSI signal strength
-         * 
-         * BLE Configuration:
-         * - Service UUID: 12345678-1234-1234-1234-123456789abc
-         * - Characteristic UUID: 12345678-1234-1234-1234-123456789abd
-         * - RSSI values: int8 (-100 to -30 dBm)
+         * 3. Track bus location using GPS
+         * 4. Calculate arrival time based on GPS distance and bus speed
          */
 
         // ========== GLOBAL VARIABLES ==========
         let recognition;                    // Voice recognition object
-        let bluetoothRSSI = -100;           // Current RSSI value from BLE device
-        let distance = 0;                   // Distance to bus in centimeters
+        let distance = 0;                   // Distance to bus in meters (from GPS)
         let timeLeft = 0;                   // Time until bus arrives in seconds
         let updateInterval = null;          // Interval for tracking updates
         let stationNumber = 3;              // Station number where passenger is waiting
-        let bluetoothDevice = null;         // Connected BLE device
-        let bluetoothServer = null;         // GATT server connection
-        let bluetoothCharacteristic = null; // Characteristic for RSSI data
-        let useBluetooth = false;           // Whether real BLE is connected
-        
-        // BLE Service and Characteristic UUIDs (must match BLE advertiser tool)
-        const BUS_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
-        const RSSI_CHARACTERISTIC_UUID = '12345678-1234-1234-1234-123456789abd';
+        let userLocation = null;            // Passenger GPS location
+        let busLocation = null;             // Bus GPS location
+        let locationWatchId = null;         // GPS watch position ID
+        const busSpeed = 50;                // Average bus speed in km/h (for time calculation)
 
         // ========== INITIALIZATION ==========
         document.getElementById('startButton').addEventListener('click', startApp);
@@ -258,7 +258,7 @@
 
         /**
          * Handle the bus number input from voice recognition
-         * Sends request to driver and starts bus tracking
+         * Sends request to driver and starts GPS tracking
          */
         function handleBusNumberInput(transcript) {
             // Stop recognition
@@ -278,161 +278,81 @@
             document.getElementById('enterBusScreen').classList.remove('active');
             document.getElementById('requestSentScreen').classList.add('active');
 
-            // After 2 seconds, start waiting screen and connect to bus
+            // After 2 seconds, start waiting screen and begin GPS tracking
             setTimeout(() => {
                 document.getElementById('requestSentScreen').classList.remove('active');
                 document.getElementById('waitingScreen').classList.add('active');
-                connectToBusBluetooth();
+                startLocationTracking();
                 startBusTracking();
             }, 2000);
         }
 
         /**
-         * Connect to bus BLE device
-         * Uses Web Bluetooth API to connect to the BLE advertiser on the bus
+         * Start GPS location tracking for passenger
          */
-        async function connectToBusBluetooth() {
-            // Check if Web Bluetooth API is available
-            if (!navigator.bluetooth) {
-                console.log('Web Bluetooth API not available, using simulation');
-                useBluetooth = false;
-                return;
-            }
-
-            try {
-                // Request Bluetooth device - user will see a list of available BLE devices
-                bluetoothDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [BUS_SERVICE_UUID] }],
-                    optionalServices: [BUS_SERVICE_UUID]
-                });
-
-                console.log('Connecting to BLE device:', bluetoothDevice.name || 'Unknown');
-                
-                // Connect to GATT server
-                bluetoothServer = await bluetoothDevice.gatt.connect();
-                
-                // Get the service
-                const service = await bluetoothServer.getPrimaryService(BUS_SERVICE_UUID);
-                
-                // Get the characteristic for RSSI updates
-                bluetoothCharacteristic = await service.getCharacteristic(RSSI_CHARACTERISTIC_UUID);
-                
-                // Enable notifications to receive RSSI updates
-                await bluetoothCharacteristic.startNotifications();
-                
-                // Listen for RSSI updates
-                bluetoothCharacteristic.addEventListener('characteristicvaluechanged', handleBluetoothUpdate);
-                
-                useBluetooth = true;
-                console.log('Bluetooth connected successfully');
-                
-                // Try to read RSSI directly from device if available
-                if (bluetoothDevice.gatt.connected) {
-                    readRSSI();
-                }
-                
-                // Handle disconnection - try to reconnect
-                bluetoothDevice.addEventListener('gattserverdisconnected', () => {
-                    console.log('Bluetooth disconnected');
-                    useBluetooth = false;
-                    setTimeout(connectToBusBluetooth, 5000);
-                });
-                
-            } catch (error) {
-                console.log('Bluetooth connection failed:', error);
-                console.log('Falling back to simulation');
-                useBluetooth = false;
+        function startLocationTracking() {
+            if (navigator.geolocation) {
+                locationWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        userLocation = {
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude,
+                            accuracy: position.coords.accuracy
+                        };
+                        updateGPSDisplay();
+                        calculateDistance();
+                    },
+                    (error) => {
+                        console.error('Geolocation error:', error);
+                        document.getElementById('gpsInfo').textContent = 'GPS: Error getting location';
+                    },
+                    { enableHighAccuracy: true, maximumAge: 1000 }
+                );
+            } else {
+                document.getElementById('gpsInfo').textContent = 'GPS: Not supported';
             }
         }
 
         /**
-         * Read RSSI value directly from BLE characteristic
+         * Update GPS display with current location
          */
-        async function readRSSI() {
-            if (bluetoothDevice && bluetoothDevice.gatt.connected) {
-                try {
-                    const value = await bluetoothCharacteristic.readValue();
-                    const dataView = new DataView(value.buffer);
-                    // RSSI is sent as int8 (signed byte)
-                    bluetoothRSSI = dataView.getInt8(0);
-                    calculateDistanceFromRSSI();
-                } catch (e) {
-                    console.log('Could not read RSSI directly:', e);
-                }
+        function updateGPSDisplay() {
+            if (userLocation) {
+                document.getElementById('gpsInfo').textContent = 
+                    `GPS: ${userLocation.lat.toFixed(6)}, ${userLocation.lon.toFixed(6)}`;
             }
         }
 
         /**
-         * Handle RSSI updates from BLE characteristic notifications
-         */
-        function handleBluetoothUpdate(event) {
-            if (!useBluetooth) return;
-            
-            const value = event.target.value;
-            const dataView = new DataView(value.buffer);
-            
-            try {
-                // Parse RSSI from Bluetooth characteristic
-                // Format: RSSI value as int8 (signed byte, -128 to 127)
-                // RSSI typically ranges from -100 (far) to -30 (close)
-                bluetoothRSSI = dataView.getInt8(0);
-                
-                // Calculate distance purely from RSSI
-                calculateDistanceFromRSSI();
-                
-            } catch (e) {
-                console.error('Error parsing Bluetooth RSSI data:', e);
-            }
-        }
-
-        /**
-         * Calculate distance from RSSI using path loss model
-         * Formula: distance = 10^((TxPower - RSSI) / (10 * N))
-         * Where:
-         * - TxPower = -59 dBm (typical reference power at 1 meter)
-         * - N = 2 (path loss exponent for free space)
-         */
-        function calculateDistanceFromRSSI() {
-            const txPower = -59; // dBm at 1 meter reference distance
-            const pathLossExponent = 2; // Free space path loss
-            
-            // Calculate distance in meters
-            const distanceMeters = Math.pow(10, (txPower - bluetoothRSSI) / (10 * pathLossExponent));
-            
-            // Convert to centimeters for demo scale
-            distance = Math.max(0, distanceMeters * 100);
-            
-            // Clamp to reasonable range (0 to 10000 cm = 100m)
-            distance = Math.min(10000, distance);
-        }
-
-        /**
-         * Start bus tracking - updates distance and time every second
-         * If BLE is connected, uses real RSSI data
-         * Otherwise, simulates bus approaching for demo
+         * Start bus tracking - gets bus location and calculates distance/time
          */
         function startBusTracking() {
-            // Simulation variables (used when BLE is not connected)
-            let simulatedDistance = 5000; // Start at 5000cm (50m)
-            let simulatedRSSI = -100;
-            
             updateInterval = setInterval(() => {
-                if (!useBluetooth) {
-                    // Simulate bus approaching - decrease distance by 50cm per second
-                    simulatedDistance = Math.max(0, simulatedDistance - 50);
-                    
-                    // Convert simulated distance to RSSI using path loss model
-                    if (simulatedDistance > 0) {
-                        const distanceMeters = simulatedDistance / 100;
-                        simulatedRSSI = -59 - 20 * Math.log10(distanceMeters);
-                        // Clamp RSSI to reasonable range
-                        simulatedRSSI = Math.max(-100, Math.min(-30, simulatedRSSI));
-                        bluetoothRSSI = simulatedRSSI;
-                        distance = simulatedDistance;
-                    } else {
-                        bluetoothRSSI = -30; // Very close
-                        distance = 0;
+                // Get bus location from driver device (via localStorage for demo)
+                // In production, this would be via WebSocket/Server
+                const busLocationData = localStorage.getItem('busLocation');
+                if (busLocationData) {
+                    try {
+                        const data = JSON.parse(busLocationData);
+                        // Check if data is recent (within 5 seconds)
+                        if (Date.now() - data.timestamp < 5000) {
+                            busLocation = {
+                                lat: data.lat,
+                                lon: data.lon
+                            };
+                            calculateDistance();
+                        }
+                    } catch (e) {
+                        console.error('Error parsing bus location data:', e);
                     }
+                }
+                
+                // If no bus location, simulate for demo
+                if (!busLocation) {
+                    // Simulate bus approaching from 5km away
+                    // In real app, this would come from driver's GPS
+                    const simulatedDistance = 5000; // 5km
+                    distance = simulatedDistance;
                 }
                 
                 // Calculate time left and update display
@@ -442,12 +362,32 @@
         }
 
         /**
-         * Calculate time until bus arrives
-         * Assumes bus speed of 30 cm/second for demo scale
+         * Calculate distance between passenger and bus using GPS coordinates
+         * Uses Haversine formula for great-circle distance
+         */
+        function calculateDistance() {
+            if (!busLocation || !userLocation) return;
+            
+            // Haversine formula for distance calculation
+            const R = 6371000; // Earth radius in meters
+            const dLat = (busLocation.lat - userLocation.lat) * Math.PI / 180;
+            const dLon = (busLocation.lon - userLocation.lon) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(userLocation.lat * Math.PI / 180) * Math.cos(busLocation.lat * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            distance = R * c; // Distance in meters
+        }
+
+        /**
+         * Calculate time until bus arrives based on distance and bus speed
          */
         function calculateTimeLeft() {
-            const busSpeed = 30; // cm per second
-            timeLeft = Math.max(0, distance / busSpeed); // Time in seconds
+            // Convert bus speed from km/h to m/s
+            const busSpeedMetersPerSecond = (busSpeed * 1000) / 3600;
+            
+            // Calculate time in seconds
+            timeLeft = Math.max(0, distance / busSpeedMetersPerSecond);
         }
 
         // Track last displayed message to avoid repeated updates
@@ -460,8 +400,8 @@
             const timeInMinutes = Math.floor(timeLeft / 60);
             const timeInSeconds = Math.floor(timeLeft % 60);
             
-            if (timeLeft <= 0) {
-                // Bus has arrived
+            if (timeLeft <= 0 || distance < 50) {
+                // Bus has arrived (within 50 meters)
                 const message = 'Bus has arrived';
                 if (lastMessageShown !== message) {
                     document.getElementById('waitingText').textContent = message;
