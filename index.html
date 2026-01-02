@@ -1,368 +1,124 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bus Station - Passenger</title>
+    <title>User Side - Voice Assist</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            overflow: hidden;
-        }
-
-        .screen {
-            display: none;
-            width: 100%;
-            height: 100vh;
-            position: fixed;
-            top: 0;
-            left: 0;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-        }
-
-        .screen.active {
-            display: flex;
-        }
-
-        .start-button {
-            width: 100%;
-            height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            color: white;
-            font-size: 72px;
-            font-weight: bold;
-            cursor: pointer;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .text-display {
-            font-size: 48px;
-            color: white;
-            font-weight: bold;
-            padding: 40px;
-            background: rgba(0, 0, 0, 0.5);
-            border-radius: 20px;
-        }
-
-        .time-display {
-            font-size: 64px;
-            color: white;
-            font-weight: bold;
-            margin-top: 30px;
-        }
-
-        .status-info {
-            font-size: 24px;
-            color: rgba(255, 255, 255, 0.9);
-            margin-top: 20px;
-        }
+        body { height: 100vh; margin: 0; background: #34495e; color: white; display: flex; align-items: center; justify-content: center; font-size: 2em; text-align: center; }
+        #overlay { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
     </style>
 </head>
-<body>
-    <!-- Start Screen -->
-    <button class="start-button" id="startButton">START</button>
-
-    <!-- Enter Bus Number Screen -->
-    <div class="screen" id="enterBusScreen">
-        <div>
-            <div class="text-display">Please enter bus number</div>
-        </div>
-    </div>
-
-    <!-- Request Sent Screen -->
-    <div class="screen" id="requestSentScreen">
-        <div>
-            <div class="text-display">Request sent</div>
-        </div>
-    </div>
-
-    <!-- Waiting Screen -->
-    <div class="screen" id="waitingScreen">
-        <div>
-            <div class="text-display" id="waitingText">Waiting for bus</div>
-            <div class="time-display" id="timeDisplay"></div>
-            <div class="status-info" id="statusInfo"></div>
-        </div>
-    </div>
+<body onclick="startProcess()">
+    <div id="overlay">TAP ANYWHERE TO START</div>
 
     <script>
-        // ========== GLOBAL VARIABLES ==========
-        let recognition;
-        let stationNumber = 3;
-        let userLocation = { lat: 0, lon: 0 }; // Starting position in cm
-        let busLocation = { lat: 0, lon: 0 }; // Bus position in cm
-        let distance = 0; // Distance in cm
-        let timeLeft = 0; // Time in seconds
-        let updateInterval = null;
-        let lastTimeUpdate = -1;
-        let hasPlayedArrived = false;
-        const busSpeed = 5; // cm per second for demo (simulates bus speed)
+        const socket = io('https://your-socket-server.com');
+        let userLat, userLng, busId, destination;
+        let isBoarded = false;
 
-        // Audio files
-        const minaboveAudio = new Audio('minabove.wav');
-        const minbelowAudio = new Audio('minbelow.wav');
-        const arrivedAudio = new Audio('arrived.wav');
+        // --- Voice Tools ---
+        const speak = (text) => {
+            const msg = new SpeechSynthesisUtterance(text);
+            window.speechSynthesis.speak(msg);
+        };
 
-        // ========== TEXT TO SPEECH ==========
-        function speak(text) {
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'en-US';
-            utterance.rate = 0.9;
-            window.speechSynthesis.speak(utterance);
-        }
-
-        // ========== START APP ==========
-        document.getElementById('startButton').addEventListener('click', function() {
-            document.getElementById('startButton').style.display = 'none';
-            document.getElementById('enterBusScreen').classList.add('active');
-            
-            // Speak instruction
-            setTimeout(() => {
-                speak('Please enter bus number');
-            }, 300);
-            
-            // Start voice recognition after short delay
-            setTimeout(() => {
-                startVoiceRecognition();
-            }, 500);
-        });
-
-        // ========== VOICE RECOGNITION ==========
-        let capturedTranscript = '';
-        let recognitionTimer = null;
-
-        function startVoiceRecognition() {
-            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                alert('Voice recognition not supported');
-                return;
-            }
-
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            recognition = new SpeechRecognition();
+        const getVoiceInput = (callback) => {
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
             recognition.lang = 'en-US';
-            recognition.continuous = true;
-            recognition.interimResults = false;
-
-            capturedTranscript = '';
-
-            recognition.onstart = () => {
-                console.log('Voice recognition started - waiting 6 seconds');
-            };
-
-            recognition.onresult = (event) => {
-                // Capture transcript but don't process yet - wait for 6 seconds
-                if (event.results.length > 0) {
-                    capturedTranscript = event.results[event.results.length - 1][0].transcript;
-                    console.log('Input captured:', capturedTranscript);
-                }
-            };
-
-            recognition.onerror = (event) => {
-                console.error('Recognition error:', event.error);
-            };
-
-            recognition.onend = () => {
-                // Don't restart - we'll process after 6 seconds
-            };
-
             recognition.start();
+            recognition.onresult = (event) => callback(event.results[0][0].transcript);
+        };
 
-            // Stop after 6 seconds and process input
-            recognitionTimer = setTimeout(() => {
-                if (recognition && document.getElementById('enterBusScreen').classList.contains('active')) {
-                    recognition.stop();
-                    // Process whatever was captured (or empty string)
-                    setTimeout(() => {
-                        handleBusNumberInput(capturedTranscript || '');
-                    }, 500);
-                }
-            }, 6000);
-        }
-
-        // ========== HANDLE BUS NUMBER INPUT ==========
-        function handleBusNumberInput(busNumber) {
-            if (recognition) {
-                recognition.stop();
-            }
-            if (recognitionTimer) {
-                clearTimeout(recognitionTimer);
-            }
-
-            // Send request to driver (using localStorage for communication)
-            localStorage.setItem('busRequest', JSON.stringify({
-                station: stationNumber,
-                timestamp: Date.now(),
-                busNumber: busNumber
-            }));
-
-            // Show request sent screen
-            document.getElementById('enterBusScreen').classList.remove('active');
-            document.getElementById('requestSentScreen').classList.add('active');
-
-            // Speak confirmation
+        // --- Step 1: Initialization ---
+        function startProcess() {
+            speak("Enter the bus number");
             setTimeout(() => {
-                speak('Request sent');
-            }, 300);
-
-            // Move to waiting screen after 2 seconds
-            setTimeout(() => {
-                document.getElementById('requestSentScreen').classList.remove('active');
-                document.getElementById('waitingScreen').classList.add('active');
-                initializeTracking();
+                getVoiceInput((voiceText) => {
+                    busId = voiceText.replace(/\s/g, ''); // Remove spaces
+                    speak("Looking for bus " + busId);
+                    requestBus();
+                });
             }, 2000);
         }
 
-        // ========== INITIALIZE TRACKING ==========
-        function initializeTracking() {
-            // Initialize user location (station position)
-            userLocation = { lat: 0, lon: 0 };
+        // --- Step 2: Request Bus & Track ---
+        function requestBus() {
+            navigator.geolocation.getCurrentPosition((pos) => {
+                userLat = pos.coords.latitude;
+                userLng = pos.coords.longitude;
+                socket.emit('request_bus_' + busId, { station: "Station 4" });
+            });
 
-            // Speak initial waiting message
-            setTimeout(() => {
-                speak('Waiting for bus');
-            }, 300);
-
-            // Start checking for bus location updates
-            startBusTracking();
+            socket.on('bus_location_update', (data) => {
+                if (data.busId === busId && !isBoarded) {
+                    calculateETA(data.lat, data.lng, "arrival");
+                }
+            });
         }
 
-        // ========== BUS TRACKING ==========
-        function startBusTracking() {
-            updateInterval = setInterval(() => {
-                // Check for bus location from driver
-                const busLocationData = localStorage.getItem('busLocation');
-                if (busLocationData) {
-                    try {
-                        const data = JSON.parse(busLocationData);
-                        if (Date.now() - data.timestamp < 5000) {
-                            busLocation = { lat: data.lat, lon: data.lon };
-                        }
-                    } catch (e) {
-                        console.error('Error parsing bus location:', e);
-                    }
-                }
+        // --- Math & Logic ---
+        function calculateETA(lat2, lng2, type) {
+            const dist = getDistance(userLat, userLng, lat2, lng2); // In meters
+            const speed = 30; // m/s as requested
+            const timeMin = Math.round((dist / speed) / 60);
 
-                // Simulate bus movement (for demo)
-                if (!busLocation) {
-                    // Initialize bus far away (2000 cm = 20 meters)
-                    busLocation = { lat: 2000, lon: 0 };
-                } else {
-                    // Simulate bus approaching (moving 5 cm per second closer)
-                    busLocation.lat = Math.max(0, busLocation.lat - busSpeed);
-                }
-
-                // Store current position
-                localStorage.setItem('busLocation', JSON.stringify({
-                    lat: busLocation.lat,
-                    lon: busLocation.lon,
-                    timestamp: Date.now()
-                }));
-
-                // Calculate distance (in cm)
-                distance = Math.sqrt(
-                    Math.pow(busLocation.lat - userLocation.lat, 2) +
-                    Math.pow(busLocation.lon - userLocation.lon, 2)
-                );
-
-                // If distance > 20m (2000 cm), use GPS
-                // If distance < 20m (2000 cm), use RSSI
-                if (distance > 2000) {
-                    // Use GPS - calculate time based on distance and speed
-                    timeLeft = distance / busSpeed; // time in seconds
-                } else {
-                        // Use RSSI - get RSSI from driver if available
-                        const rssiData = localStorage.getItem('busRSSI');
-                        if (rssiData) {
-                            try {
-                                const rssi = JSON.parse(rssiData);
-                                // Use RSSI to refine distance estimate
-                                // RSSI typically ranges from -100 (far) to 0 (very close)
-                                // For demo, use RSSI to estimate remaining distance
-                                // Stronger signal (higher RSSI) = closer
-                                const rssiDistance = Math.max(0, Math.min(2000, (100 + rssi.rssi) * 20)); // Convert RSSI to cm (0-2000cm range)
-                                // Use the smaller of GPS distance or RSSI-based distance
-                                const refinedDistance = Math.min(distance, rssiDistance);
-                                timeLeft = refinedDistance / busSpeed;
-                            } catch (e) {
-                                // Fallback to GPS calculation
-                                timeLeft = distance / busSpeed;
-                            }
-                        } else {
-                            // Fallback to GPS calculation
-                            timeLeft = distance / busSpeed;
-                        }
-                    }
-
-                updateDisplay();
-            }, 1000); // Update every second
-        }
-
-        // ========== UPDATE DISPLAY ==========
-        function updateDisplay() {
-            const timeInMinutes = Math.ceil(timeLeft / 60); // Convert seconds to minutes (round up)
-
-            if (timeLeft <= 0 || distance < 50) {
-                // Bus has arrived
-                const message = 'Bus has arrived';
-                document.getElementById('waitingText').textContent = message;
-                document.getElementById('timeDisplay').textContent = '';
-                document.getElementById('statusInfo').textContent = '';
-
-                if (!hasPlayedArrived) {
-                    speak(message);
-                    arrivedAudio.play().catch(e => console.log('Audio play error:', e));
-                    
-                    // Vibrate
-                    if (navigator.vibrate) {
-                        navigator.vibrate([200, 100, 200, 100, 200]);
-                    }
-                    
-                    hasPlayedArrived = true;
-                    clearInterval(updateInterval);
-                }
-            } else if (timeInMinutes > 10) {
-                // More than 10 minutes
-                const message = 'More than 10 minutes';
-                document.getElementById('waitingText').textContent = message;
-                document.getElementById('timeDisplay').textContent = `${timeInMinutes} min`;
-                document.getElementById('statusInfo').textContent = distance > 2000 ? 'Using GPS' : 'Using Bluetooth';
-
-                if (lastTimeUpdate !== 'above10') {
-                    speak(message);
-                    minaboveAudio.play().catch(e => console.log('Audio play error:', e));
-                    lastTimeUpdate = 'above10';
-                }
+            if (dist < 20) { // If within 20 meters
+                handleArrival(type);
             } else {
-                // Less than 10 minutes
-                const message = `${timeInMinutes} minutes`;
-                document.getElementById('waitingText').textContent = message;
-                document.getElementById('timeDisplay').textContent = `${timeInMinutes} min`;
-                document.getElementById('statusInfo').textContent = distance > 2000 ? 'Using GPS' : 'Using Bluetooth';
-
-                if (lastTimeUpdate !== 'below10') {
-                    speak(message);
-                    minbelowAudio.play().catch(e => console.log('Audio play error:', e));
-                    lastTimeUpdate = 'below10';
-                }
+                speak(timeMin + " minutes left for the bus to arrive");
             }
+        }
+
+        function handleArrival(type) {
+            if (type === "arrival") {
+                let count = 0;
+                const interval = setInterval(() => {
+                    speak("Bus has arrived");
+                    navigator.vibrate([500, 200, 500]);
+                    count++;
+                    if (count >= 4) clearInterval(interval);
+                }, 3000);
+                
+                // Once clicked, move to destination phase
+                document.body.onclick = () => {
+                    clearInterval(interval);
+                    isBoarded = true;
+                    promptDestination();
+                };
+            } else {
+                // Destination reached
+                let count = 0;
+                const interval = setInterval(() => {
+                    speak("You have arrived. Please unboard.");
+                    navigator.vibrate([1000, 500, 1000]);
+                    count++;
+                    if (count >= 3) clearInterval(interval);
+                }, 4000);
+            }
+        }
+
+        function promptDestination() {
+            speak("Please say your destination");
+            getVoiceInput((dest) => {
+                destination = dest;
+                speak("Heading to " + destination + ". Calculating time.");
+                // In a real app, you'd use a Geocoding API to get destination coords
+                // For this code, we simulate tracking the bus while onboard
+            });
+        }
+
+        // Haversine Formula for Distance
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; 
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; 
         }
     </script>
 </body>
