@@ -1,125 +1,70 @@
 <!DOCTYPE html>
-<html>
+<html lang="am">
 <head>
-    <title>User Side - Voice Assist</title>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <style>
-        body { height: 100vh; margin: 0; background: #34495e; color: white; display: flex; align-items: center; justify-content: center; font-size: 2em; text-align: center; }
-        #overlay { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Amharic Voice Test</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%);
+      color: #222;
+      text-align: center;
+      padding: 40px;
+    }
+    button {
+      font-size: 22px;
+      padding: 20px 40px;
+      margin: 20px;
+      border: none;
+      border-radius: 12px;
+      background: #1976d2;
+      color: white;
+      cursor: pointer;
+    }
+    #output {
+      margin-top: 30px;
+      font-size: 20px;
+      color: #333;
+    }
+  </style>
 </head>
-<body onclick="startProcess()">
-    <div id="overlay">TAP ANYWHERE TO START</div>
+<body>
 
-    <script>
-        const socket = io('https://your-socket-server.com');
-        let userLat, userLng, busId, destination;
-        let isBoarded = false;
+<h1>🎙️ Amharic Voice Test</h1>
 
-        // --- Voice Tools ---
-        const speak = (text) => {
-            const msg = new SpeechSynthesisUtterance(text);
-            window.speechSynthesis.speak(msg);
-        };
+<button onclick="startRecognition()">🎤 Speak Amharic</button>
+<button onclick="speakAmharic()">🔊 Speak Output</button>
 
-        const getVoiceInput = (callback) => {
-            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-            recognition.lang = 'en-US';
-            recognition.start();
-            recognition.onresult = (event) => callback(event.results[0][0].transcript);
-        };
+<div id="output">Waiting for input…</div>
 
-        // --- Step 1: Initialization ---
-        function startProcess() {
-            speak("Enter the bus number");
-            setTimeout(() => {
-                getVoiceInput((voiceText) => {
-                    busId = voiceText.replace(/\s/g, ''); // Remove spaces
-                    speak("Looking for bus " + busId);
-                    requestBus();
-                });
-            }, 2000);
-        }
+<script>
+function startRecognition() {
+  const rec = new webkitSpeechRecognition();
+  rec.lang = "am-ET"; // Amharic language code
+  rec.start();
 
-        // --- Step 2: Request Bus & Track ---
-        function requestBus() {
-            navigator.geolocation.getCurrentPosition((pos) => {
-                userLat = pos.coords.latitude;
-                userLng = pos.coords.longitude;
-                socket.emit('request_bus_' + busId, { station: "Station 4" });
-            });
+  rec.onresult = e => {
+    const text = e.results[0][0].transcript;
+    document.getElementById("output").innerText = "You said: " + text;
+    // Speak back what was said
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "am-ET";
+    speechSynthesis.speak(utter);
+  };
 
-            socket.on('bus_location_update', (data) => {
-                if (data.busId === busId && !isBoarded) {
-                    calculateETA(data.lat, data.lng, "arrival");
-                }
-            });
-        }
+  rec.onerror = e => {
+    document.getElementById("output").innerText = "Error: " + e.error;
+  };
+}
 
-        // --- Math & Logic ---
-        function calculateETA(lat2, lng2, type) {
-            const dist = getDistance(userLat, userLng, lat2, lng2); // In meters
-            const speed = 30; // m/s as requested
-            const timeMin = Math.round((dist / speed) / 60);
+function speakAmharic() {
+  const text = "እንኳን ደህና መጡ"; // Example: "Welcome" in Amharic
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "am-ET";
+  speechSynthesis.speak(utter);
+  document.getElementById("output").innerText = "Speaking: " + text;
+}
+</script>
 
-            if (dist < 20) { // If within 20 meters
-                handleArrival(type);
-            } else {
-                speak(timeMin + " minutes left for the bus to arrive");
-            }
-        }
-
-        function handleArrival(type) {
-            if (type === "arrival") {
-                let count = 0;
-                const interval = setInterval(() => {
-                    speak("Bus has arrived");
-                    navigator.vibrate([500, 200, 500]);
-                    count++;
-                    if (count >= 4) clearInterval(interval);
-                }, 3000);
-                
-                // Once clicked, move to destination phase
-                document.body.onclick = () => {
-                    clearInterval(interval);
-                    isBoarded = true;
-                    promptDestination();
-                };
-            } else {
-                // Destination reached
-                let count = 0;
-                const interval = setInterval(() => {
-                    speak("You have arrived. Please unboard.");
-                    navigator.vibrate([1000, 500, 1000]);
-                    count++;
-                    if (count >= 3) clearInterval(interval);
-                }, 4000);
-            }
-        }
-
-        function promptDestination() {
-            speak("Please say your destination");
-            getVoiceInput((dest) => {
-                destination = dest;
-                speak("Heading to " + destination + ". Calculating time.");
-                // In a real app, you'd use a Geocoding API to get destination coords
-                // For this code, we simulate tracking the bus while onboard
-            });
-        }
-
-        // Haversine Formula for Distance
-        function getDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; 
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            return R * c; 
-        }
-    </script>
 </body>
 </html>
