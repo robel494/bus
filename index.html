@@ -1,68 +1,70 @@
 <!DOCTYPE html>
-<html lang="am">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Amharic Voice Test</title>
-  <style>
-    body {
-      font-family: "Segoe UI", Arial, sans-serif;
-      background: linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%);
-      color: #222;
-      text-align: center;
-      padding: 40px;
-    }
-    button {
-      font-size: 22px;
-      padding: 20px 40px;
-      margin: 20px;
-      border: none;
-      border-radius: 12px;
-      background: #1976d2;
-      color: white;
-      cursor: pointer;
-    }
-    #output {
-      margin-top: 30px;
-      font-size: 20px;
-      color: #333;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>20 Words Reader</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  button {
+    padding: 15px 25px;
+    font-size: 18px;
+    border: none;
+    border-radius: 10px;
+    background: #00c853;
+    color: #000;
+    cursor: pointer;
+  }
+</style>
 </head>
 <body>
 
-<h1>🎙️ Amharic Voice Test</h1>
-
-<button onclick="startRecognition()">🎤 Speak Amharic</button>
-<button onclick="speakAmharic()">🔊 Speak Output</button>
-
-<div id="output">Waiting for input…</div>
+<h2>20 Words Voice Reader</h2>
+<button onclick="startReading()">Start Reading</button>
 
 <script>
-function startRecognition() {
-  const rec = new webkitSpeechRecognition();
-  rec.lang = "am-ET"; // Amharic language code
-  rec.start();
+const words = [
+  "Welcome", "to", "this", "simple", "voice", "reading",
+  "example", "that", "speaks", "twenty", "words",
+  "with", "six", "second", "intervals", "between",
+  "each", "spoken", "word", "clearly"
+];
 
-  rec.onresult = e => {
-    const text = e.results[0][0].transcript;
-    document.getElementById("output").innerText = "You said: " + text;
-    // Speak back what was said
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "am-ET";
-    speechSynthesis.speak(utter);
-  };
-
-  rec.onerror = e => {
-    document.getElementById("output").innerText = "Error: " + e.error;
-  };
+// Safety check
+if (words.length !== 20) {
+  console.error("You must provide exactly 20 words.");
 }
 
-function speakAmharic() {
-  const text = "እንኳን ደህና መጡ"; // Example: "Welcome" in Amharic
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "am-ET";
-  speechSynthesis.speak(utter);
-  document.getElementById("output").innerText = "Speaking: " + text;
+let index = 0;
+
+function speakWord(word) {
+  const utterance = new SpeechSynthesisUtterance(word);
+  utterance.lang = "en-US";
+  utterance.rate = 0.9;
+  speechSynthesis.speak(utterance);
+}
+
+function startReading() {
+  index = 0;
+  speechSynthesis.cancel();
+  readNextWord();
+}
+
+function readNextWord() {
+  if (index >= words.length) return;
+
+  speakWord(words[index]);
+  index++;
+
+  setTimeout(readNextWord, 6000); // 6 seconds
 }
 </script>
 
