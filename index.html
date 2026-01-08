@@ -2,72 +2,118 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>20 Words Reader</title>
+<title>6-Second Word Reader</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <style>
-  body {
-    font-family: Arial, sans-serif;
-    background: #111;
-    color: #fff;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-  }
-  button {
-    padding: 15px 25px;
-    font-size: 18px;
-    border: none;
-    border-radius: 10px;
-    background: #00c853;
-    color: #000;
-    cursor: pointer;
-  }
+    body {
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #2196f3, #00c853);
+        margin: 0;
+        padding: 20px;
+        color: white;
+        text-align: center;
+    }
+
+    h1 {
+        margin-bottom: 10px;
+    }
+
+    textarea {
+        width: 100%;
+        max-width: 500px;
+        height: 150px;
+        font-size: 18px;
+        padding: 10px;
+        border-radius: 10px;
+        border: none;
+        outline: none;
+    }
+
+    button {
+        margin: 10px;
+        padding: 15px 25px;
+        font-size: 18px;
+        border: none;
+        border-radius: 25px;
+        cursor: pointer;
+    }
+
+    #start {
+        background: #ffeb3b;
+        color: #000;
+    }
+
+    #stop {
+        background: #f44336;
+        color: white;
+    }
+
+    #currentWord {
+        margin-top: 25px;
+        font-size: 40px;
+        font-weight: bold;
+    }
 </style>
 </head>
+
 <body>
 
-<h2>20 Words Voice Reader</h2>
-<button onclick="startReading()">Start Reading</button>
+<h1>6-Second Word Reader</h1>
+<p>Enter text and hear one word every 6 seconds</p>
+
+<textarea id="textInput" placeholder="Type or paste text here..."></textarea>
+<br>
+
+<button id="start">▶ Start Reading</button>
+<button id="stop">⏹ Stop</button>
+
+<div id="currentWord"></div>
 
 <script>
-const words = [
-  "Welcome", "to", "this", "simple", "voice", "reading",
-  "example", "that", "speaks", "twenty", "words",
-  "with", "six", "second", "intervals", "between",
-  "each", "spoken", "word", "clearly"
-];
-
-// Safety check
-if (words.length !== 20) {
-  console.error("You must provide exactly 20 words.");
-}
-
+let words = [];
 let index = 0;
+let interval = null;
 
-function speakWord(word) {
-  const utterance = new SpeechSynthesisUtterance(word);
-  utterance.lang = "en-US";
-  utterance.rate = 0.9;
-  speechSynthesis.speak(utterance);
+function speak(word) {
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.lang = "en-US";
+    speechSynthesis.speak(utterance);
 }
 
-function startReading() {
-  index = 0;
-  speechSynthesis.cancel();
-  readNextWord();
-}
+document.getElementById("start").onclick = () => {
+    speechSynthesis.cancel();
+    clearInterval(interval);
 
-function readNextWord() {
-  if (index >= words.length) return;
+    const text = document.getElementById("textInput").value.trim();
+    if (!text) return alert("Please enter some text");
 
-  speakWord(words[index]);
-  index++;
+    words = text.split(/\s+/);
+    index = 0;
 
-  setTimeout(readNextWord, 6000); // 6 seconds
-}
+    document.getElementById("currentWord").textContent = "";
+
+    speak(words[index]);
+    document.getElementById("currentWord").textContent = words[index];
+    index++;
+
+    interval = setInterval(() => {
+        if (index >= words.length) {
+            clearInterval(interval);
+            return;
+        }
+        speak(words[index]);
+        document.getElementById("currentWord").textContent = words[index];
+        index++;
+    }, 6000); // 6 seconds
+};
+
+document.getElementById("stop").onclick = () => {
+    clearInterval(interval);
+    speechSynthesis.cancel();
+    document.getElementById("currentWord").textContent = "";
+};
 </script>
 
 </body>
 </html>
-
